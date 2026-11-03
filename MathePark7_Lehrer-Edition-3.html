@@ -318,8 +318,27 @@ class AudioEngine {
         const f = 4200 + Math.random() * 400;
         for (let i = 0; i < 5; i++) this.tone(f, t + i * 0.07, 0.03, "square", 0.018, this.sg);
       }
+      const z = this.zone || "default";
+      if (z === "bahnhof" && Math.random() < 0.16) { this.tone(622, t, 0.5, "sine", 0.12, this.sg, 622); this.tone(466, t + 0.42, 0.7, "sine", 0.12, this.sg, 466); this.noiseBurst(t, 1.6, 300, 0.05); }
+      else if (z === "hafen" && Math.random() < 0.22) { this.noiseBurst(t, 1.4, 900, 0.09, 2400); }
+      else if (z === "markt" && Math.random() < 0.3) { for (let i = 0; i < 4; i++) this.tone(180 + Math.random() * 160, t + i * 0.13, 0.1, "triangle", 0.05, this.sg, 140 + Math.random() * 200); }
+      else if (z === "zentrale" && Math.random() < 0.1) { this.bellTone(392, t, 1.2, 0.08, this.sg); }
+      else if (z === "zahlen" && Math.random() < 0.25) { this.tone(880 + Math.random() * 440, t, 0.09, "square", 0.03, this.sg, 1320); }
+      else if (z === "formen" && Math.random() < 0.2) { this.tone(520, t, 0.35, "sine", 0.05, this.sg, 780); }
     }, 900);
   }
+  noiseBurst(t, dur, freq, vol, glideTo) {
+    if (!this.ctx) return;
+    const len = Math.floor(this.ctx.sampleRate * dur);
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 1.4);
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const bp = this.ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.setValueAtTime(freq, t); if (glideTo) bp.frequency.linearRampToValueAtTime(glideTo, t + dur); bp.Q.value = 0.8;
+    const g = this.ctx.createGain(); g.gain.value = vol;
+    src.connect(bp); bp.connect(g); g.connect(this.sg); src.start(t);
+  }
+  setZone(z) { this.zone = z || "default"; }
   stopAmbient() {
     this.ambOn = false;
     if (this.ambTimer) { clearInterval(this.ambTimer); this.ambTimer = null; }
@@ -5083,6 +5102,25 @@ function Kiosk({ farbe }) {
   );
 }
 
+function GlowPulse({ position, color, scale, night }) {
+  const m = useRef();
+  useFrame((st) => {
+    if (m.current) {
+      const t = st.clock.elapsedTime;
+      const o = 0.16 + Math.sin(t * 2.2) * 0.07 + (night || 0) * 0.1;
+      m.current.material.opacity = o;
+      const s = scale * (1 + Math.sin(t * 2.2) * 0.03);
+      m.current.scale.set(s, s, 1);
+    }
+  });
+  return (
+    <mesh ref={m} position={position} rotation={[-Math.PI / 2, 0, 0]}>
+      <circleGeometry args={[1, 36]} />
+      <meshBasicMaterial color={color} transparent opacity={0.2} blending={THREE.AdditiveBlending} depthWrite={false} />
+    </mesh>
+  );
+}
+
 function Station({ st, active, onSelect, setHover, done, night }) {
   const Ride = { coaster: Coaster, carousel: Carousel, train: Train, water: WaterRide, drop: DropTower, ghost: GhostHouse, ferris: FerrisWheel, booth: Booth, slide: SlideBars, hall: ExamHall, chest: Chest, kiosk: Kiosk }[st.kind];
   const [hov, setHov] = useState(false);
@@ -5117,6 +5155,7 @@ function Station({ st, active, onSelect, setHover, done, night }) {
             <ringGeometry args={[4.3, 4.75, 40]} />
             <meshBasicMaterial color="#ffd43b" transparent opacity={0.85} />
           </mesh>
+          <GlowPulse position={[0, 0.12, 0]} color="#ffd43b" scale={9.5} night={night} />
         </group>
       )}
       <Html position={[0, 7.6, 0]} center distanceFactor={30} style={{ pointerEvents: "none" }}>
@@ -5243,14 +5282,25 @@ function CameraRig({ viewRef, keysRef, orbitRef, onOrbitEnd, introHoldRef }) {
 // Himmelskuppel: Farbverlauf je Jahreszeit UND Tageszeit
 function SkyDome({ season, tod }) {
   const th = useMemo(() => todTheme(tod, season), [season, tod]);
-  const tex = useMemo(() => makeTex("sky_" + season + "_" + Math.round(((tod % 24) + 24) % 24), 256, (ctx, s) => {
+  const todQ = Math.round(((tod % 24) + 24) % 24 * 4) / 4;
+  const tex = useMemo(() => makeTex("sky_" + season + "_" + todQ + "_v2", 256, (ctx, s) => {
     const g = ctx.createLinearGradient(0, 0, 0, s);
     g.addColorStop(0, th.skyTop);
     g.addColorStop(0.5, th.skyMid);
     g.addColorStop(0.8, th.skyLow);
     g.addColorStop(1, th.fog);
     ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
-  }, 1), [season, th]);
+    // Dämmerungs-Glühen um die Sonne: radialer warmer Schein am Horizont
+    if (th.dusk > 0.03) {
+      const sx = s * 0.5 + Math.cos(((tod - 6) / 12) * Math.PI) * s * 0.42;
+      const sy = s * (0.86 - Math.max(0, Math.sin(((tod - 6) / 12) * Math.PI)) * 0.16);
+      const rg = ctx.createRadialGradient(sx, sy, 2, sx, sy, s * 0.75);
+      rg.addColorStop(0, "rgba(255,166,88," + (0.85 * th.dusk).toFixed(3) + ")");
+      rg.addColorStop(0.35, "rgba(255,120,60," + (0.4 * th.dusk).toFixed(3) + ")");
+      rg.addColorStop(1, "rgba(255,120,60,0)");
+      ctx.fillStyle = rg; ctx.fillRect(0, 0, s, s);
+    }
+  }, 1), [season, th, todQ]);
   return (
     <mesh renderOrder={-1}>
       <sphereGeometry args={[400, 24, 14]} />
@@ -5411,7 +5461,7 @@ function HighClouds({ night }) {
 }
 
 function StringLights({ posts, night }) {
-  const on = night > 0.25;
+  const on = Math.max(0, Math.min(1, (night - 0.18) * 1.8));
   const bulbs = useMemo(() => {
     const out = [];
     for (let i = 0; i < posts.length; i++) {
@@ -5428,7 +5478,7 @@ function StringLights({ posts, night }) {
       {bulbs.map((b, i) => (
         <mesh key={i} position={[b.x, b.y, b.z]}>
           <sphereGeometry args={[0.085, 6, 6]} />
-          <meshBasicMaterial color={on ? "#ffd43b" : "#9c8b6a"} fog={false} />
+          <meshBasicMaterial color={on > 0.5 ? "#ffd43b" : "#9c8b6a"} transparent opacity={0.35 + on * 0.65} fog={false} />
         </mesh>
       ))}
     </group>
@@ -5499,6 +5549,17 @@ function stripeTex(c1, c2) {
   const t = new THREE.CanvasTexture(cv);
   STRIPE_TEX[key] = t;
   return t;
+}
+let CIRCLE_ALPHA = null;
+function circleAlphaTex() {
+  if (CIRCLE_ALPHA) return CIRCLE_ALPHA;
+  const cv = document.createElement("canvas"); cv.width = cv.height = 128;
+  const c = cv.getContext("2d");
+  const g = c.createRadialGradient(64, 64, 40, 64, 64, 63);
+  g.addColorStop(0, "rgba(255,255,255,1)"); g.addColorStop(0.92, "rgba(255,255,255,1)"); g.addColorStop(1, "rgba(255,255,255,0)");
+  c.fillStyle = g; c.beginPath(); c.arc(64, 64, 63, 0, 7); c.fill();
+  CIRCLE_ALPHA = new THREE.CanvasTexture(cv);
+  return CIRCLE_ALPHA;
 }
 let FOG_TEX = null;
 function fogTex() {
@@ -5629,15 +5690,30 @@ function Boat({ position, rot }) {
 function HarborPond({ w, night }) {
   const o = worldOutside(w, 9);
   const water = useRef(), beam = useRef();
+  const base = useRef(null);
+  useLayoutEffect(() => {
+    const g = water.current && water.current.geometry;
+    if (g && !base.current) base.current = g.attributes.position.array.slice();
+  }, []);
   useFrame((st) => {
     const t = st.clock.elapsedTime;
-    if (water.current) water.current.position.y = 0.09 + Math.sin(t * 1.4) * 0.03;
+    const mesh = water.current;
+    if (mesh && base.current) {
+      const pos = mesh.geometry.attributes.position;
+      const arr = pos.array, b = base.current;
+      for (let i = 0; i < pos.count; i++) {
+        const x = b[i * 3], z = b[i * 3 + 2];
+        arr[i * 3 + 1] = Math.sin(x * 0.55 + t * 1.6) * 0.07 + Math.cos(z * 0.45 + t * 1.15) * 0.06;
+      }
+      pos.needsUpdate = true;
+      mesh.geometry.computeVertexNormals();
+    }
     if (beam.current) beam.current.rotation.y = t * 0.9;
   });
   return (
     <group position={[o[0], 0, o[1]]}>
       <mesh position={[0, 0.04, 0]} rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[9, 36]} /><meshStandardMaterial color="#155e75" roughness={0.7} /></mesh>
-      <mesh ref={water} position={[0, 0.09, 0]} rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[8.4, 36]} /><meshStandardMaterial color="#38bdf8" transparent opacity={0.65} roughness={0.1} metalness={0.5} /></mesh>
+      <mesh ref={water} position={[0, 0.09, 0]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[16.8, 16.8, 26, 26]} /><meshStandardMaterial color="#38bdf8" transparent opacity={0.72} roughness={0.08} metalness={0.6} alphaMap={circleAlphaTex()} /></mesh>
       <Boat position={[-3, 0, 2]} rot={0.5} />
       <Boat position={[3.2, 0, -2.2]} rot={-0.9} />
       <group position={[6.4, 0, 5.6]}>
@@ -5863,6 +5939,143 @@ function CompassWidget({ viewRef, doneMap }) {
   );
 }
 
+function GodRays({ th }) {
+  if (th.dusk < 0.22 && th.night < 0.5) return null;
+  const warm = th.dusk > 0.22;
+  const col = warm ? "#ffb35c" : "#cfe0ff";
+  const op = warm ? th.dusk * 0.16 : th.night * 0.07;
+  const sx = th.sun[0] * 1.15, sy = Math.max(24, th.sun[1]), sz = th.sun[2] * 1.15 - 18;
+  return (
+    <group position={[sx, sy, sz]}>
+      {[0, 1, 2, 3, 4].map((i) => (
+        <mesh key={i} rotation={[0, (i / 5) * Math.PI * 2, 0]} position={[Math.cos((i / 5) * Math.PI * 2) * 2, -sy * 0.5, Math.sin((i / 5) * Math.PI * 2) * 2]}>
+          <coneGeometry args={[3.2 + (i % 3), Math.max(60, sy * 1.6), 8, 1, true]} />
+          <meshBasicMaterial color={col} transparent opacity={op} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} fog={false} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function Birds({ night }) {
+  const g = useRef();
+  const flocks = useMemo(() => Array.from({ length: 3 }, (_, i) => ({ ph: i * 2.1, sp: 0.05 + i * 0.013, r: 70 + i * 26, h: 22 + i * 6 })), []);
+  useFrame((st) => {
+    if (!g.current) return;
+    const t = st.clock.elapsedTime;
+    g.current.children.forEach((f, i) => {
+      const fl = flocks[i];
+      const a = t * fl.sp + fl.ph;
+      f.position.set(Math.sin(a) * fl.r, fl.h + Math.sin(t * 0.7 + i) * 2, Math.cos(a) * fl.r);
+      f.rotation.y = -a;
+      f.children.forEach((b, bi) => {
+        b.position.y = Math.sin(t * 9 + bi * 1.3 + i) * 0.16;
+        b.rotation.z = Math.sin(t * 9 + bi * 1.3 + i) * 0.5;
+      });
+    });
+  });
+  if (night > 0.5) return null;
+  return (
+    <group ref={g}>
+      {flocks.map((f, i) => (
+        <group key={i}>
+          {[[-0.5, 0], [0.5, 0], [0, -0.55], [-0.25, 0.45], [0.25, 0.45]].map(([x, z], bi) => (
+            <group key={bi} position={[x, 0, z]}>
+              <mesh rotation={[0, 0, 0.35]}><planeGeometry args={[0.55, 0.22]} /><meshBasicMaterial color="#1e293b" side={THREE.DoubleSide} transparent opacity={0.85} /></mesh>
+              <mesh rotation={[0, 0, -0.35]} position={[-0.28, 0, 0]}><planeGeometry args={[0.55, 0.22]} /><meshBasicMaterial color="#1e293b" side={THREE.DoubleSide} transparent opacity={0.85} /></mesh>
+            </group>
+          ))}
+        </group>
+      ))}
+    </group>
+  );
+}
+
+function PathSigns() {
+  return (
+    <group>
+      {WORLDS.map((w) => {
+        const a = w.a0;
+        const x = Math.sin(a) * 24.5, z = Math.cos(a) * 24.5;
+        const side = Math.cos(a) > 0 ? 1 : -1;
+        return (
+          <group key={w.key} position={[x + Math.cos(a) * 2.6 * side, 0, z - Math.sin(a) * 2.6 * side]} rotation={[0, a + (side > 0 ? 0 : Math.PI), 0]}>
+            <mesh position={[0, 1.5, 0]} castShadow><cylinderGeometry args={[0.07, 0.09, 3, 8]} /><meshStandardMaterial color="#6b4f2e" roughness={0.9} /></mesh>
+            <mesh position={[0, 2.6, 0]} castShadow><boxGeometry args={[2.6, 1.1, 0.09]} /><meshStandardMaterial color="#fff8e7" roughness={0.8} /></mesh>
+            <mesh position={[0, 2.6, 0.055]}><boxGeometry args={[2.4, 0.9, 0.02]} /><meshStandardMaterial color={w.farbe} /></mesh>
+            <Html position={[0, 2.6, 0.12]} center distanceFactor={26} style={{ pointerEvents: "none" }}>
+              <div style={{ fontWeight: 900, fontSize: 11, color: "#fff", whiteSpace: "nowrap", textShadow: "0 1px 2px rgba(0,0,0,0.6)" }}>{w.icon} {w.kurz} ➤</div>
+            </Html>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
+function PromenadeExtras({ night }) {
+  return (
+    <group>
+      {Array.from({ length: 6 }, (_, i) => {
+        const a = (i * Math.PI) / 3 + Math.PI / 6;
+        const x = Math.sin(a) * 19.5, z = Math.cos(a) * 19.5;
+        return <Bench key={"b" + i} position={[x + Math.cos(a) * 2.2, 0, z - Math.sin(a) * 2.2]} farbe={i % 2 ? "#8d99ae" : "#a16207"} />;
+      })}
+      {Array.from({ length: 4 }, (_, i) => {
+        const a = (i * Math.PI) / 2 + Math.PI / 4;
+        return <LampPost key={"hub" + i} position={[Math.sin(a) * 11, 0, Math.cos(a) * 11]} night={night} withLight={i % 2 === 0} />;
+      })}
+      {Array.from({ length: 8 }, (_, i) => {
+        const a = (i * Math.PI) / 4;
+        return (
+          <group key={"pot" + i} position={[Math.sin(a) * 15.2, 0, Math.cos(a) * 15.2]}>
+            <mesh position={[0, 0.22, 0]} castShadow><cylinderGeometry args={[0.42, 0.36, 0.44, 10]} /><meshStandardMaterial color="#b45309" roughness={0.85} /></mesh>
+            <mesh position={[0, 0.62, 0]} castShadow><icosahedronGeometry args={[0.4, 0]} /><meshStandardMaterial color="#2f9e44" flatShading roughness={0.9} /></mesh>
+            <mesh position={[0.12, 0.78, 0.08]}><icosahedronGeometry args={[0.16, 0]} /><meshStandardMaterial color={["#ff8787", "#ffd43b", "#b2f2bb"][i % 3]} flatShading /></mesh>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
+function Bushes({ season }) {
+  const winter = season === "winter";
+  const data = useMemo(() => {
+    const rnd = mulberry32(4242);
+    const out = [];
+    for (let i = 0; i < 260 && out.length < 90; i++) {
+      const a = rnd() * Math.PI * 2, r = 24 + Math.sqrt(rnd()) * 78;
+      const x = Math.sin(a) * r, z = Math.cos(a) * r;
+      const nearW = WORLDS.some((w) => Math.hypot(x - w.center[0], z - w.center[2]) < (w.bez || 19) + 2.2);
+      const onPath = Math.abs(r - PROMENADE) < 3.2 || WORLDS.some((w) => { const t = x * Math.sin(w.a0) + z * Math.cos(w.a0); return t > 20 && t < w.r + 8 && Math.hypot(x - Math.sin(w.a0) * t, z - Math.cos(w.a0) * t) < 3.6; });
+      if (nearW || onPath) continue;
+      if (PARK_COLLIDERS.some((c) => Math.hypot(x - c.x, z - c.z) < c.r + 1.2)) continue;
+      out.push({ x, z, s: 0.7 + rnd() * 0.9, rot: rnd() * 6.28 });
+    }
+    return out;
+  }, [season]);
+  const ref = useRef();
+  useLayoutEffect(() => {
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), s = new THREE.Vector3(), c = new THREE.Color();
+    if (!ref.current) return;
+    data.forEach((b, i) => {
+      e.set(0, b.rot, 0); q.setFromEuler(e);
+      v.set(b.x, 0.32 * b.s, b.z); s.set(b.s, b.s, b.s);
+      m.compose(v, q, s); ref.current.setMatrixAt(i, m);
+      c.set(winter ? "#dbe7f3" : i % 3 ? "#2f9e44" : "#40c057"); ref.current.setColorAt(i, c);
+    });
+    ref.current.instanceMatrix.needsUpdate = true;
+    if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
+  }, [data, winter]);
+  return (
+    <instancedMesh key={"bush" + season} ref={ref} args={[undefined, undefined, Math.max(1, data.length)]} castShadow frustumCulled={false}>
+      <icosahedronGeometry args={[0.62, 1]} />
+      <meshStandardMaterial roughness={0.95} flatShading />
+    </instancedMesh>
+  );
+}
+
 function PerfDpr() {
   const setDpr = useThree((s) => s.setDpr);
   return <PerformanceMonitor onChange={(api) => setDpr(1 + api.factor * 0.8)} />;
@@ -5935,8 +6148,13 @@ function Park({ onSelect, onWalk, activeKey, viewRef, setHover, doneMap, season,
       <HighClouds night={th.night} />
       <AmbientLife season={season} night={th.night} deco={deco} />
       <GroundDetails key={"gd" + season} season={season} />
+      <Bushes key={"bush" + season} season={season} />
       <WorldLandmarks night={th.night} />
       <PromenadeLamps night={th.night} />
+      <PromenadeExtras night={th.night} />
+      <PathSigns />
+      <Birds night={th.night} />
+      <GodRays th={th} />
       <NightGlow night={th.night} />
       <Weather season={season} tod={tod == null ? 13 : tod} night={th.night} />
       <Pickups viewRef={viewRef} collected={picked || {}} onCollect={onPick} />
@@ -5952,9 +6170,9 @@ function Park({ onSelect, onWalk, activeKey, viewRef, setHover, doneMap, season,
       {STATIONS.map((st) => <Station key={st.key} st={st} active={activeKey === st.key} onSelect={onSelect} setHover={setHover} done={!!(doneMap && doneMap[st.key])} night={th.night} />)}
     </Canvas>
       {/* Filmische Vignette: sanft abgedunkelte Bildränder über der 3D-Szene */}
-      <div className="mp-noprint" style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 6, background: "radial-gradient(ellipse at 50% 42%, rgba(0,0,0,0) 55%, rgba(15,23,42,0.32) 100%)" }} />
-      {/* Farbstimmung (Grading): warm bei Dämmerung, kühl bei Nacht – wie ein Look-Layer im Spiel */}
-      {th.dusk > 0.04 && <div className="mp-noprint" style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 6, background: "#ff9e5e", opacity: th.dusk * 0.3, mixBlendMode: "soft-light" }} />}
+      <div className="mp-noprint" style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 6, background: `radial-gradient(ellipse at 50% 42%, rgba(0,0,0,0) ${Math.round(55 - th.dusk * 18)}%, rgba(15,23,42,${Math.round((0.32 + th.dusk * 0.14 + th.night * 0.14) * 100) / 100}) 100%)` }} />
+      {/* Farbstimmung (Grading): warm golden bei Dämmerung, kühl bei Nacht – wie ein Look-Layer im Spiel */}
+      {th.dusk > 0.04 && <div className="mp-noprint" style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 6, background: "#ff9e5e", opacity: th.dusk * 0.42, mixBlendMode: "soft-light" }} />}
       {th.night > 0.04 && <div className="mp-noprint" style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 6, background: "#1d3a6e", opacity: th.night * 0.28, mixBlendMode: "soft-light" }} />}
     </div>
   );
@@ -11520,6 +11738,20 @@ export default function App() {
   const [darkMode, setDarkMode] = useLocalJSON("mp7_dark", null); // V16: null = automatisch nach System-Einstellung (prefers-color-scheme)
   const darkOn = darkMode === null ? (typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) : !!darkMode;
   const [tod, setTod] = useLocalJSON("mp7_tod", 13);
+  const [todSmooth, setTodSmooth] = useState(tod == null ? 13 : tod);
+  useEffect(() => {
+    let raf; let from = todSmooth; let to = ((tod == null ? 13 : tod) % 24 + 24) % 24;
+    if (Math.abs(((to - from + 36) % 24) - 12) > 12) from += ((to - from + 36) % 24) - 12 > 12 ? 24 : -24;
+    const t0 = performance.now(); const dur = 900;
+    const tick = (now) => {
+      const k = Math.min(1, (now - t0) / dur);
+      const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      setTodSmooth(from + (to - from) * e);
+      if (k < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [tod]);
   const [todAuto, setTodAuto] = useState(false);
   const [orbit, setOrbit] = useState(false);
   const orbitRef = useRef(false);
@@ -11579,7 +11811,16 @@ export default function App() {
   const walkTargetRef = useRef(null);
   const keysRef = useRef({});
   const [picked, setPicked] = useLocalJSON("mp7_pickups", {});
-  useEffect(() => { AE.tod = tod == null ? 13 : tod; }, [tod]);
+  useEffect(() => { AE.tod = todSmooth == null ? 13 : todSmooth; }, [todSmooth]);
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const p = viewRef.current.p;
+      let best = null, bd = 42;
+      WORLDS.forEach((w) => { const d = Math.hypot(w.center[0] - p.x, w.center[2] - p.z) - (w.bez || 19); if (d < bd) { bd = d; best = w.key; } });
+      AE.setZone(best || "default");
+    }, 500);
+    return () => clearInterval(iv);
+  }, []);
   const doneMap = useMemo(() => {
     const m = {};
     LESSONS.forEach((L) => { const e = plan && plan[L.id]; m[L.id] = !!(e && e.done && KLASSEN.some((k) => e.done[k])); });
@@ -11624,8 +11865,14 @@ export default function App() {
     viewRef.current.fly = { tp: new THREE.Vector3(w.center[0] * 0.5, 16, w.center[2] * 0.5), tl: new THREE.Vector3(w.center[0], 1.8, w.center[2]), t: 0, dur: 1.7, h: 10 };
   };
   const nextWorld = () => { worldIdxRef.current = (worldIdxRef.current + 1) % WORLDS.length; flyWorld(WORLDS[worldIdxRef.current]); };
+  const [seenStations, setSeenStations] = useLocalJSON("mp7_seen_stations", {});
   const selectStation = (st, keepExam) => {
     AE.sfx("open");
+    if (!seenStations[st.key]) {
+      setSeenStations(Object.assign({}, seenStations, { [st.key]: true }));
+      setConfetti((c) => c + 1);
+      talerAward(5, "erstbesuch_" + st.key, "🚩 Erstbesuch: " + st.name);
+    }
     if (!keepExam) setExamQuick(null); // Format-Vorauswahl nur beim Schnellstart behalten
     AE.mood = st.world ? st.world.key : "default";
     setActiveKey(st.key);
@@ -11734,7 +11981,7 @@ export default function App() {
           .mp-ansbox { border: 1.5px solid #44403c !important; background-color: #fff !important; background-size: 0.5cm 0.5cm !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; page-break-inside: avoid; }
         }
       `}</style>
-      <Park onSelect={selectStation} onWalk={walkTo} activeKey={activeKey} viewRef={viewRef} setHover={setHover} doneMap={doneMap} season={season} onFlyWorld={flyWorld} keysRef={keysRef} markerRef={walkTargetRef} tod={tod} orbitRef={orbitRef} onOrbitEnd={() => setOrbit(false)} deco={shop.owned || {}} introHoldRef={introHoldRef} picked={picked} onPick={onPick} />
+      <Park onSelect={selectStation} onWalk={walkTo} activeKey={activeKey} viewRef={viewRef} setHover={setHover} doneMap={doneMap} season={season} onFlyWorld={flyWorld} keysRef={keysRef} markerRef={walkTargetRef} tod={todSmooth} orbitRef={orbitRef} onOrbitEnd={() => setOrbit(false)} deco={shop.owned || {}} introHoldRef={introHoldRef} picked={picked} onPick={onPick} />
 
       {/* HUD oben: RCT-Werkzeugbalken, bündig am oberen Rand über die volle Breite */}
       <div className="mp-noprint mp-wood mp-hud-top mp-safe-t mp-safe-l mp-safe-r" style={{ position: "absolute", top: 10, left: 14, right: 14, zIndex: 20, display: "flex", alignItems: "center", gap: 12, padding: "6px 18px", borderRadius: 999, boxShadow: "0 10px 30px rgba(15,23,42,0.25), 0 2px 8px rgba(15,23,42,0.18)", pointerEvents: "none", whiteSpace: "nowrap" }}>
