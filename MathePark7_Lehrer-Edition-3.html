@@ -5203,6 +5203,10 @@ function EnvLight({ season, tod }) {
   return null;
 }
 
+function PerfDpr() {
+  const setDpr = useThree((s) => s.setDpr);
+  return <PerformanceMonitor onChange={(api) => setDpr(1 + api.factor * 0.8)} />;
+}
 function Park({ onSelect, onWalk, activeKey, viewRef, setHover, doneMap, season, onFlyWorld, keysRef, markerRef, tod, orbitRef, onOrbitEnd, deco, introHoldRef }) {
   const winter = season === "winter";
   const th = useMemo(() => todTheme(tod == null ? 13 : tod, season), [tod, season]);
@@ -5231,7 +5235,7 @@ function Park({ onSelect, onWalk, activeKey, viewRef, setHover, doneMap, season,
       <color attach="background" args={[th.bg]} />
       {/* Passt die Pixelrate automatisch an (dpr-Grenzen oben im Canvas):
           bei Lastabfall Auflösung senken, bei Entlastung sanft erhöhen. */}
-      <PerformanceMonitor onDecline={(api) => api.decrease()} onIncline={(api) => api.increase()} />
+      <PerfDpr />
       <fogExp2 attach="fog" args={[th.fog, th.fogDensity]} />
       <SkyDome season={season} tod={tod == null ? 13 : tod} />
       <EnvLight season={season} tod={tod == null ? 13 : tod} />
@@ -7760,6 +7764,7 @@ function ExamPanel({ onClose, onOpenSpecial, onBuilt, onConfetti, jplan, initFor
     }
     return body;
   };
+  const fnameB = (ext) => `${fmt.name.replace(/[^A-Za-zÄÖÜäöüß0-9]+/g, "_").replace(/^_+|_+$/g, "")}_Mathematik7${showSol ? "_mit_Loesungen" : ""}.${ext}`;
   const exportWord = () => {
     if (!tasksShown) return;
     const body = examBodyH();
@@ -7770,7 +7775,6 @@ function ExamPanel({ onClose, onOpenSpecial, onBuilt, onConfetti, jplan, initFor
       `<style>body{font-family:'Segoe UI',Arial,sans-serif;font-size:11pt}p{margin:4pt 0}</style></head>`,
       `<body>${body.join("")}</body></html>`,
     ].join("");
-    const fnameB = (ext) => `${fmt.name.replace(/[^A-Za-zÄÖÜäöüß0-9]+/g, "_").replace(/^_+|_+$/g, "")}_Mathematik7${showSol ? "_mit_Loesungen" : ""}.${ext}`;
     downloadBlob(fnameB("doc"), html, "application/msword");
   };
   // V15 – echter .docx-Export: gleicher Inhalt, aber als WordprocessingML im Minimal-ZIP.
@@ -11244,6 +11248,5 @@ const __mp7container = document.getElementById("mp7-root");
 __mp7container.textContent = "";
 createRoot(__mp7container).render(<App />);
 </script>
-<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/vce701823e78c4301a35b7e07294d87301792088814092" integrity="sha512-UKNk8GbxkABxKcXYuLkO16EleLGUkcvJWtpSNmExE0Too3ZaFAxTscNWEc1OdAv5/BikHawapSCaiD2XCmp+Bw==" nonce="gvKBq350MphF2vcFaWQaEQ==" data-cf-beacon='{"version":"2024.11.0","token":"36b4216ae2dc4d5488c249161e71fe1e","spa":2}' crossorigin="anonymous"></script>
 </body>
 </html>
