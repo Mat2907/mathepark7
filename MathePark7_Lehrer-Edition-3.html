@@ -55,7 +55,7 @@
 <script type="text/babel" data-type="module" data-presets="react">
 import { createRoot } from "react-dom/client";
 
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Html, Sparkles, Stars, PerformanceMonitor } from "@react-three/drei";
 import * as THREE from "three";
@@ -179,7 +179,7 @@ const METHODS = [
 
 // Audio-Engine (Hintergrundmusik & Effekte, Web Audio)
 class AudioEngine {
-  constructor() { this.ctx = null; this.sfxOn = true; this.musicOn = false; this.timer = null; this.step = 0; this.nextT = 0; this.mood = "default"; }
+  constructor() { this.ctx = null; this.sfxOn = true; this.musicOn = false; this.timer = null; this.step = 0; this.nextT = 0; this.mood = "default"; this.ambOn = false; this.tod = 13; this.weather = "clear"; this.windGain = null; this.windSrc = null; this.ambTimer = null; }
   ensure() {
     if (!this.ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -246,6 +246,7 @@ class AudioEngine {
     if (!this.ensure()) return;
     if (this.musicOn) return;
     this.musicOn = true;
+    this.startAmbient();
     const f = (semi) => 261.63 * Math.pow(2, semi / 12);
     const mel = [
       0, 4, 7, 12, 9, 7, 4, 0,
@@ -287,7 +288,68 @@ class AudioEngine {
       }
     }, 160);
   }
-  stopMusic() { this.musicOn = false; if (this.timer) { clearInterval(this.timer); this.timer = null; } }
+  stopMusic() { this.musicOn = false; if (this.timer) { clearInterval(this.timer); this.timer = null; } this.stopAmbient(); }
+  startAmbient() {
+    if (!this.ensure() || this.ambOn) return;
+    this.ambOn = true;
+    const ctx = this.ctx;
+    const len = ctx.sampleRate * 2;
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < len; i++) { const w = Math.random() * 2 - 1; last = (last + 0.02 * w) / 1.02; d[i] = last * 3.2; }
+    const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+    const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 420;
+    this.windGain = ctx.createGain(); this.windGain.gain.value = 0.05;
+    src.connect(lp); lp.connect(this.windGain); this.windGain.connect(this.master); src.start();
+    this.windSrc = src;
+    this.ambTimer = setInterval(() => {
+      if (!this.ambOn || !this.musicOn || !this.ctx) return;
+      const t = this.ctx.currentTime;
+      const tod = this.tod == null ? 13 : this.tod;
+      const night = tod < 6.5 || tod > 19.5;
+      const w = this.weather || "clear";
+      this.windGain.gain.setTargetAtTime(w === "storm" ? 0.16 : w === "rain" ? 0.09 : 0.05, t, 0.8);
+      if (!night && Math.random() < 0.3) {
+        const f0 = 2400 + Math.random() * 1800;
+        const n = 2 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < n; i++) this.tone(f0 + Math.random() * 600, t + i * 0.09, 0.07, "sine", 0.045, this.sg, f0 * 1.3);
+      } else if (night && Math.random() < 0.4) {
+        const f = 4200 + Math.random() * 400;
+        for (let i = 0; i < 5; i++) this.tone(f, t + i * 0.07, 0.03, "square", 0.018, this.sg);
+      }
+    }, 900);
+  }
+  stopAmbient() {
+    this.ambOn = false;
+    if (this.ambTimer) { clearInterval(this.ambTimer); this.ambTimer = null; }
+    if (this.windSrc) { try { this.windSrc.stop(); } catch (e) {} this.windSrc = null; }
+  }
+  footstep(sprint) {
+    if (!this.ctx || !this.sfxOn) return;
+    if (!this.ensure()) return;
+    const t = this.ctx.currentTime;
+    const len = Math.floor(this.ctx.sampleRate * 0.07);
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const bp = this.ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = sprint ? 480 : 700; bp.Q.value = 1.1;
+    const g = this.ctx.createGain(); g.gain.value = sprint ? 0.22 : 0.13;
+    src.connect(bp); bp.connect(g); g.connect(this.sg); src.start(t);
+  }
+  rumble() {
+    if (!this.ensure() || !this.sfxOn) return;
+    const t = this.ctx.currentTime;
+    const len = Math.floor(this.ctx.sampleRate * 1.4);
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.2);
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const lp = this.ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 160;
+    const g = this.ctx.createGain(); g.gain.setValueAtTime(0.5, t); g.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
+    src.connect(lp); lp.connect(g); g.connect(this.sg); src.start(t);
+  }
   sfx(kind) {
     if (!this.ensure() || !this.sfxOn) return;
     const t = this.ctx.currentTime;
@@ -5074,6 +5136,7 @@ function CameraRig({ viewRef, keysRef, orbitRef, onOrbitEnd, introHoldRef }) {
   const { camera } = useThree();
   const cur = useRef({ p: new THREE.Vector3(0, 70, 85), l: new THREE.Vector3(0, 0, 0) });
   const vel = useRef(new THREE.Vector3());
+  const egoRef = useRef(false); const savedY = useRef(null); const bobPh = useRef(0); const stepAcc = useRef(0); const fovCur = useRef(55);
   const introDone = useRef(false);
   useFrame((st, dt) => {
     const kk = keysRef && keysRef.current;
@@ -5147,15 +5210,31 @@ function CameraRig({ viewRef, keysRef, orbitRef, onOrbitEnd, introHoldRef }) {
       vel.current.lerp(wish, 1 - Math.exp(-7.5 * dt));
       p.addScaledVector(vel.current, dt);
       l.addScaledVector(vel.current, dt);
-      const rad = Math.hypot(p.x, p.z);
-      if (rad > 102) { const q = 102 / rad; const ox = p.x, oz = p.z; p.x *= q; p.z *= q; l.x += p.x - ox; l.z += p.z - oz; }
+      const ox = p.x, oz = p.z;
+      resolveParkCollisions(p);
+      l.x += p.x - ox; l.z += p.z - oz;
+      const speed = vel.current.length();
+      kk._speed = speed;
+      const ego = !!kk.ego;
+      if (ego !== egoRef.current) { egoRef.current = ego; if (ego) savedY.current = p.y; }
+      if (ego) { p.y += (2.3 - p.y) * Math.min(1, dt * 4); l.y += (1.7 - l.y) * Math.min(1, dt * 4); }
+      else if (savedY.current != null) {
+        p.y += (savedY.current - p.y) * Math.min(1, dt * 2.2);
+        l.y += ((savedY.current > 40 ? 0 : 1.7) - l.y) * Math.min(1, dt * 2.2);
+        if (Math.abs(p.y - savedY.current) < 0.06) savedY.current = null;
+      }
+      stepAcc.current += speed * dt;
+      if (speed > 1.5 && stepAcc.current > (kk.shift ? 3.1 : 2.05)) { stepAcc.current = 0; AE.footstep(!!kk.shift); }
     }
     const k = 1 - Math.exp(-2.8 * dt);
     cur.current.p.lerp(viewRef.current.p, k);
     cur.current.l.lerp(viewRef.current.l, k);
     camera.position.copy(cur.current.p);
-    // Kamera-Atem: Schwebung im Stand – nie eingefroren
+    const spd = (kk && kk._speed) || 0;
+    if (spd > 0.8) { bobPh.current += dt * (4.5 + spd * 0.55); camera.position.y += Math.sin(bobPh.current) * 0.05 * Math.min(1, spd / 9); camera.position.x += Math.sin(bobPh.current * 0.5) * 0.03 * Math.min(1, spd / 9); }
     camera.position.y += Math.sin(st.clock.elapsedTime * 0.5) * 0.09 + Math.sin(st.clock.elapsedTime * 0.21 + 1.7) * 0.07;
+    const fovT = (kk && kk.ego ? 66 : 55) + (spd > 19 ? 6 : 0);
+    if (Math.abs(fovCur.current - fovT) > 0.05) { fovCur.current += (fovT - fovCur.current) * Math.min(1, dt * 5); camera.fov = fovCur.current; camera.updateProjectionMatrix(); }
     camera.lookAt(cur.current.l);
   });
   return null;
@@ -5203,11 +5282,592 @@ function EnvLight({ season, tod }) {
   return null;
 }
 
+function mulberry32(a) { return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function wrapAng(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; }
+function worldLocal(w, x, z) { return [w.center[0] + x * Math.cos(w.a0) + z * Math.sin(w.a0), w.center[2] - x * Math.sin(w.a0) + z * Math.cos(w.a0)]; }
+function worldGatePos(w) { const bez = (w.bez || 19) + 0.6; return [w.center[0] - Math.sin(w.a0) * bez, w.center[2] - Math.cos(w.a0) * bez]; }
+function worldOutside(w, extra) { const d = (w.bez || 19) + (extra || 7); return [w.center[0] + Math.sin(w.a0) * d, w.center[2] + Math.cos(w.a0) * d]; }
+
+const PARK_COLLIDERS = (() => {
+  const out = [];
+  STATIONS.forEach((st) => out.push({ x: st.pos[0], z: st.pos[2], r: 4.9 }));
+  TREES.forEach((t) => out.push({ x: t[0], z: t[2], r: 0.55 * (t[4] || 1) }));
+  for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + (i * Math.PI) / 3; out.push({ x: Math.sin(a) * 19.5, z: Math.cos(a) * 19.5, r: 0.4 }); }
+  WORLDS.forEach((w) => {
+    [[-11, 8], [11, 8]].forEach(([x, z]) => { const q = worldLocal(w, x, z); out.push({ x: q[0], z: q[1], r: 0.45 }); });
+    if (w.key === "zentrale") {
+      [[12, 6], [13.5, 8], [13, 10.5], [-13, 7]].forEach(([x, z]) => { const q = worldLocal(w, x, z); out.push({ x: q[0], z: q[1], r: 1.7 }); });
+      const tp = worldLocal(w, 0, 13); out.push({ x: tp[0], z: tp[1], r: 6.5 });
+    }
+    const o = worldOutside(w, 8);
+    if (w.key === "zentrale" || w.key === "formen") out.push({ x: o[0], z: o[1], r: 4.6 });
+    if (w.key === "markt") for (let i = -1; i <= 1; i++) out.push({ x: o[0] + Math.cos(w.a0) * i * 6, z: o[1] - Math.sin(w.a0) * i * 6, r: 2.3 });
+    if (w.key === "hafen") out.push({ x: o[0], z: o[1], r: 9.3 });
+  });
+  return out;
+})();
+
+function resolveParkCollisions(p) {
+  for (const c of PARK_COLLIDERS) {
+    const dx = p.x - c.x, dz = p.z - c.z, d2 = dx * dx + dz * dz;
+    if (d2 < c.r * c.r && d2 > 1e-6) { const d = Math.sqrt(d2); p.x = c.x + (dx / d) * c.r; p.z = c.z + (dz / d) * c.r; }
+  }
+  const rad = Math.hypot(p.x, p.z);
+  if (rad > 102) { p.x *= 102 / rad; p.z *= 102 / rad; }
+}
+
+function GroundDetails({ season }) {
+  const winter = season === "winter", herbst = season === "herbst";
+  const data = useMemo(() => {
+    const rnd = mulberry32(20261);
+    const nearPath = (x, z) => {
+      const r = Math.hypot(x, z);
+      if (r < 21.5 || Math.abs(r - PROMENADE) < 2.6) return true;
+      for (const w of WORLDS) { if (Math.hypot(x - w.center[0], z - w.center[2]) < (w.bez || 19) + 1.6) return true; }
+      for (const w of WORLDS) {
+        const wx = Math.sin(w.a0), wz = Math.cos(w.a0);
+        const t = x * wx + z * wz;
+        if (t < 20 || t > w.r + 8) continue;
+        if (Math.hypot(x - wx * t, z - wz * t) < 3.4) return true;
+      }
+      return false;
+    };
+    const tufts = [], flowers = [], stones = [];
+    for (let i = 0; i < 900 && tufts.length < 620; i++) {
+      const a = rnd() * Math.PI * 2, r = 22 + Math.sqrt(rnd()) * 83;
+      const x = Math.sin(a) * r, z = Math.cos(a) * r;
+      if (nearPath(x, z)) continue;
+      tufts.push({ x, z, s: 0.5 + rnd() * 0.9, rot: rnd() * Math.PI });
+    }
+    const petals = winter ? ["#e9ecef"] : herbst ? ["#e8590c", "#f08c00", "#fcc419", "#d9480f"] : ["#ff8787", "#ffd43b", "#fa5252", "#b2f2bb", "#9775fa", "#ffe066"];
+    for (let i = 0; i < 420 && flowers.length < 260; i++) {
+      const a = rnd() * Math.PI * 2, r = 22 + Math.sqrt(rnd()) * 83;
+      const x = Math.sin(a) * r, z = Math.cos(a) * r;
+      if (nearPath(x, z)) continue;
+      flowers.push({ x, z, s: 0.7 + rnd() * 0.7, c: petals[Math.floor(rnd() * petals.length)] });
+    }
+    for (let i = 0; i < 260 && stones.length < 140; i++) {
+      const a = rnd() * Math.PI * 2, r = 22 + Math.sqrt(rnd()) * 83;
+      const x = Math.sin(a) * r, z = Math.cos(a) * r;
+      if (nearPath(x, z)) continue;
+      stones.push({ x, z, s: 0.25 + rnd() * 0.55, rot: rnd() * Math.PI, c: winter ? "#cbd5e1" : "#adb5bd" });
+    }
+    return { tufts, flowers, stones };
+  }, [season]);
+  const tuftRef = useRef(), flowerRef = useRef(), stoneRef = useRef();
+  useLayoutEffect(() => {
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), s = new THREE.Vector3(), c = new THREE.Color();
+    const fill = (ref, arr, yb, colFn) => {
+      if (!ref.current) return;
+      arr.forEach((it, i) => {
+        e.set(0, it.rot || 0, 0); q.setFromEuler(e);
+        v.set(it.x, yb, it.z); s.set(it.s, it.s, it.s);
+        m.compose(v, q, s); ref.current.setMatrixAt(i, m);
+        colFn(c, i, it); ref.current.setColorAt(i, c);
+      });
+      ref.current.instanceMatrix.needsUpdate = true;
+      if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
+    };
+    fill(tuftRef.current, data.tufts, 0.14, (c, i) => c.set(winter ? "#dbe7f3" : herbst ? (i % 2 ? "#8a7a45" : "#6f6335") : ["#3f9e3f", "#57b04a", "#2f8f3a"][i % 3]));
+    fill(flowerRef.current, data.flowers, 0.18, (c, i, it) => c.set(it.c));
+    fill(stoneRef.current, data.stones, 0.07, (c, i, it) => c.set(it.c));
+  }, [data, winter, herbst]);
+  return (
+    <group>
+      <instancedMesh key={"t" + season} ref={tuftRef} args={[undefined, undefined, Math.max(1, data.tufts.length)]} frustumCulled={false}>
+        <coneGeometry args={[0.16, 0.55, 5]} />
+        <meshStandardMaterial roughness={0.95} />
+      </instancedMesh>
+      <instancedMesh key={"f" + season} ref={flowerRef} args={[undefined, undefined, Math.max(1, data.flowers.length)]} frustumCulled={false}>
+        <octahedronGeometry args={[0.17, 0]} />
+        <meshStandardMaterial roughness={0.7} flatShading />
+      </instancedMesh>
+      <instancedMesh key={"s" + season} ref={stoneRef} args={[undefined, undefined, Math.max(1, data.stones.length)]} frustumCulled={false}>
+        <dodecahedronGeometry args={[0.3, 0]} />
+        <meshStandardMaterial roughness={0.95} flatShading />
+      </instancedMesh>
+    </group>
+  );
+}
+
+function HighClouds({ night }) {
+  const g1 = useRef(), g2 = useRef();
+  const hi = useMemo(() => { const rnd = mulberry32(7); const out = []; for (let i = 0; i < 8; i++) out.push({ x: (rnd() - 0.5) * 250, z: (rnd() - 0.5) * 250, y: 58 + rnd() * 10, s: 8 + rnd() * 7 }); return out; }, []);
+  const mid = useMemo(() => { const rnd = mulberry32(19); const out = []; for (let i = 0; i < 6; i++) out.push({ x: (rnd() - 0.5) * 220, z: (rnd() - 0.5) * 220, y: 44 + rnd() * 7, s: 5 + rnd() * 5 }); return out; }, []);
+  useFrame((st, dt) => { if (g1.current) g1.current.rotation.y += dt * 0.0045; if (g2.current) g2.current.rotation.y -= dt * 0.0026; });
+  const tint = night > 0.45 ? "#7c8aa5" : "#ffffff";
+  const cloud = (p, i, o) => (
+    <mesh key={i} position={[p.x, p.y, p.z]} scale={[p.s, p.s * 0.45, p.s]}>
+      <sphereGeometry args={[1, 12, 10]} />
+      <meshStandardMaterial color={tint} transparent opacity={o} roughness={1} fog={false} />
+    </mesh>
+  );
+  return (
+    <group>
+      <group ref={g2}>{mid.map((p, i) => cloud(p, i, 0.5))}</group>
+      <group ref={g1}>{hi.map((p, i) => cloud(p, i + 100, 0.65))}</group>
+    </group>
+  );
+}
+
+function StringLights({ posts, night }) {
+  const on = night > 0.25;
+  const bulbs = useMemo(() => {
+    const out = [];
+    for (let i = 0; i < posts.length; i++) {
+      const a = posts[i], b = posts[(i + 1) % posts.length];
+      for (let k = 1; k < 8; k++) {
+        const t = k / 8;
+        out.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, y: 3.05 - Math.sin(t * Math.PI) * 0.9 });
+      }
+    }
+    return out;
+  }, [posts]);
+  return (
+    <group>
+      {bulbs.map((b, i) => (
+        <mesh key={i} position={[b.x, b.y, b.z]}>
+          <sphereGeometry args={[0.085, 6, 6]} />
+          <meshBasicMaterial color={on ? "#ffd43b" : "#9c8b6a"} fog={false} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function PromenadeLamps({ night }) {
+  const posts = useMemo(() => Array.from({ length: 6 }, (_, i) => { const a = Math.PI / 6 + (i * Math.PI) / 3; return { x: Math.sin(a) * 19.5, z: Math.cos(a) * 19.5 }; }), []);
+  return (
+    <group>
+      {posts.map((p, i) => <LampPost key={i} position={[p.x, 0, p.z]} night={night} withLight={i % 2 === 0} />)}
+      <StringLights posts={posts} night={night} />
+      {posts.map((p, i) => (
+        <mesh key={"pool" + i} rotation={[-Math.PI / 2, 0, 0]} position={[p.x, 0.045, p.z]}>
+          <circleGeometry args={[3.6, 24]} />
+          <meshBasicMaterial color="#ffd9a0" transparent opacity={Math.max(0, night - 0.25) * 0.55} blending={THREE.AdditiveBlending} depthWrite={false} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function NightGlow({ night }) {
+  if (night <= 0.25) return null;
+  return (
+    <group>
+      {WORLDS.map((w) => {
+        const g = worldGatePos(w);
+        return (
+          <group key={w.key}>
+            <mesh position={[g[0], 2.7, g[1]]} rotation={[0, w.a0, 0]}>
+              <boxGeometry args={[8, 5.4, 0.35]} />
+              <meshBasicMaterial color={w.farbe} transparent opacity={night * 0.4} blending={THREE.AdditiveBlending} depthWrite={false} fog={false} />
+            </mesh>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[g[0], 0.05, g[1]]}>
+              <circleGeometry args={[5, 24]} />
+              <meshBasicMaterial color={w.farbe} transparent opacity={night * 0.3} blending={THREE.AdditiveBlending} depthWrite={false} />
+            </mesh>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
+const SYM_TEX = {};
+function symTex(sym, color) {
+  const key = sym + "|" + (color || "");
+  if (SYM_TEX[key]) return SYM_TEX[key];
+  const cv = document.createElement("canvas"); cv.width = cv.height = 128;
+  const c = cv.getContext("2d");
+  c.clearRect(0, 0, 128, 128);
+  c.fillStyle = color || "#7c2d12";
+  c.font = "900 82px 'Comic Sans MS', 'Segoe UI', sans-serif";
+  c.textAlign = "center"; c.textBaseline = "middle";
+  c.fillText(sym, 64, 70);
+  const t = new THREE.CanvasTexture(cv); t.anisotropy = 4;
+  SYM_TEX[key] = t;
+  return t;
+}
+const STRIPE_TEX = {};
+function stripeTex(c1, c2) {
+  const key = c1 + "|" + c2;
+  if (STRIPE_TEX[key]) return STRIPE_TEX[key];
+  const cv = document.createElement("canvas"); cv.width = 64; cv.height = 64;
+  const c = cv.getContext("2d");
+  for (let i = 0; i < 8; i++) { c.fillStyle = i % 2 ? c1 : c2; c.fillRect(i * 8, 0, 8, 64); }
+  const t = new THREE.CanvasTexture(cv);
+  STRIPE_TEX[key] = t;
+  return t;
+}
+let FOG_TEX = null;
+function fogTex() {
+  if (FOG_TEX) return FOG_TEX;
+  const cv = document.createElement("canvas"); cv.width = 256; cv.height = 128;
+  const c = cv.getContext("2d");
+  const g = c.createRadialGradient(128, 64, 8, 128, 64, 120);
+  g.addColorStop(0, "rgba(226,232,240,0.85)"); g.addColorStop(1, "rgba(226,232,240,0)");
+  c.fillStyle = g; c.fillRect(0, 0, 256, 128);
+  FOG_TEX = new THREE.CanvasTexture(cv);
+  return FOG_TEX;
+}
+
+function Fountain({ position }) {
+  const water = useRef();
+  useFrame((st) => {
+    const t = st.clock.elapsedTime;
+    if (water.current) { water.current.position.y = 0.62 + Math.sin(t * 2.1) * 0.03; water.current.scale.setScalar(1 + Math.sin(t * 3.3) * 0.02); }
+  });
+  return (
+    <group position={position}>
+      <mesh position={[0, 0.25, 0]} castShadow><cylinderGeometry args={[4.2, 4.5, 0.5, 28]} /><meshStandardMaterial color="#94a3b8" roughness={0.6} /></mesh>
+      <mesh ref={water} position={[0, 0.62, 0]} rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[3.6, 28]} /><meshStandardMaterial color="#38bdf8" transparent opacity={0.75} roughness={0.15} metalness={0.4} /></mesh>
+      <mesh position={[0, 1.4, 0]} castShadow><cylinderGeometry args={[0.35, 0.5, 2.4, 12]} /><meshStandardMaterial color="#94a3b8" roughness={0.6} /></mesh>
+      <mesh position={[0, 2.75, 0]}><sphereGeometry args={[0.5, 14, 14]} /><meshStandardMaterial color="#bae6fd" roughness={0.2} /></mesh>
+      <mesh position={[0, 3.15, 0]}><coneGeometry args={[0.3, 1.7, 10]} /><meshStandardMaterial color="#bae6fd" transparent opacity={0.55} /></mesh>
+    </group>
+  );
+}
+
+function FloatSyms({ w }) {
+  const o = worldOutside(w, 9);
+  const items = [["7", -5, 5.5], ["∑", 0.5, 7.6], ["2", 5.5, 4.6]];
+  return (
+    <group position={[o[0], 0, o[1]]} rotation={[0, w.a0, 0]}>
+      {items.map(([s, x, y], i) => (
+        <Bob key={s} amp={0.4} speed={1.1 + i * 0.3} y={y} position={[x, 0, 6]}>
+          <Spin speed={0.5 + i * 0.2}><mesh><planeGeometry args={[2.6, 2.6]} /><meshBasicMaterial map={symTex(s, "#b45309")} transparent side={THREE.DoubleSide} /></mesh></Spin>
+        </Bob>
+      ))}
+    </group>
+  );
+}
+
+function ShapeCluster({ w }) {
+  const o = worldOutside(w, 9);
+  const g = useRef();
+  useFrame((st) => { if (g.current) g.current.rotation.y = st.clock.elapsedTime * 0.25; });
+  return (
+    <group position={[o[0], 0, o[1]]}>
+      <group ref={g}>
+        <mesh position={[-3, 2.2, 0]} castShadow><torusGeometry args={[1.5, 0.5, 12, 24]} /><meshStandardMaterial color="#3b82f6" roughness={0.35} metalness={0.2} /></mesh>
+        <mesh position={[0.5, 2.7, 1.5]} castShadow><icosahedronGeometry args={[1.4]} /><meshStandardMaterial color="#93c5fd" flatShading roughness={0.5} /></mesh>
+        <mesh position={[3.4, 1.9, -1]} castShadow><coneGeometry args={[1.1, 2.6, 10]} /><meshStandardMaterial color="#1d4ed8" roughness={0.4} /></mesh>
+        <mesh position={[0, 0.6, -3]} castShadow><boxGeometry args={[2.4, 1.2, 2.4]} /><meshStandardMaterial color="#60a5fa" roughness={0.5} /></mesh>
+      </group>
+    </group>
+  );
+}
+
+function TrainRing({ w }) {
+  const bez = (w.bez || 19) + 5.5;
+  const train = useRef();
+  useFrame((st) => {
+    if (!train.current) return;
+    const t = st.clock.elapsedTime * 0.1;
+    train.current.position.set(w.center[0] + Math.sin(t) * bez, 0.55, w.center[2] + Math.cos(t) * bez);
+    train.current.rotation.y = Math.PI / 2 + t;
+  });
+  return (
+    <group>
+      <mesh position={[w.center[0], 0.1, w.center[2]]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[bez, 0.09, 8, 64]} /><meshStandardMaterial color="#64748b" /></mesh>
+      <group ref={train}>
+        <mesh castShadow><boxGeometry args={[1.6, 1.1, 3.4]} /><meshStandardMaterial color="#0369a1" roughness={0.4} /></mesh>
+        <mesh position={[0, 0.75, -0.4]} castShadow><boxGeometry args={[1.3, 0.7, 1.6]} /><meshStandardMaterial color="#e2e8f0" /></mesh>
+        <mesh position={[0, 1.35, 1.1]}><cylinderGeometry args={[0.14, 0.2, 0.7, 8]} /><meshStandardMaterial color="#334155" /></mesh>
+        {[-1, 1].map((s) => (
+          <group key={s} position={[s * 1.1, 0, -3.8]}>
+            <mesh castShadow><boxGeometry args={[1.4, 0.9, 2.6]} /><meshStandardMaterial color={s < 0 ? "#dc2626" : "#f59e0b"} roughness={0.5} /></mesh>
+          </group>
+        ))}
+        {[[-0.7, -1.4], [0.7, -1.4], [-0.7, 1.4], [0.7, 1.4]].map(([x, z], i) => (
+          <mesh key={i} position={[x, -0.45, z]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.28, 0.28, 0.2, 10]} /><meshStandardMaterial color="#1e293b" /></mesh>
+        ))}
+      </group>
+    </group>
+  );
+}
+
+function MarketStalls({ w }) {
+  const o = worldOutside(w, 9);
+  return (
+    <group position={[o[0], 0, o[1]]} rotation={[0, w.a0, 0]}>
+      {[-6, 0, 6].map((x, i) => (
+        <group key={i} position={[x, 0, 6]}>
+          <mesh position={[0, 1.1, 0]} castShadow><boxGeometry args={[3.2, 2.2, 2]} /><meshStandardMaterial color={["#f8fafc", "#fef3c7", "#dcfce7"][i]} roughness={0.8} /></mesh>
+          {[-1.5, 1.5].map((px) => [-1, 1].map((pz) => (
+            <mesh key={px + "" + pz} position={[px, 2.3, pz]}><cylinderGeometry args={[0.06, 0.06, 2.2, 6]} /><meshStandardMaterial color="#7c4a21" /></mesh>
+          )))}
+          <mesh position={[0, 3.2, 0]} rotation={[0.12, 0, 0]}><boxGeometry args={[3.9, 0.12, 2.7]} /><meshStandardMaterial map={stripeTex(i % 2 ? "#dc2626" : "#15803d", "#ffffff")} roughness={0.9} /></mesh>
+          <mesh position={[0, 0.4, 1.4]}><boxGeometry args={[1.6, 0.8, 0.8]} /><meshStandardMaterial color="#b45309" roughness={0.9} /></mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+function Boat({ position, rot }) {
+  const b = useRef();
+  useFrame((st) => {
+    if (b.current) {
+      const t = st.clock.elapsedTime;
+      b.current.position.y = 0.14 + Math.sin(t * 1.8 + position[0]) * 0.08;
+      b.current.rotation.z = Math.sin(t * 1.5 + position[2]) * 0.07;
+    }
+  });
+  return (
+    <group position={position} rotation={[0, rot, 0]}>
+      <group ref={b}>
+        <mesh castShadow><boxGeometry args={[2.2, 0.5, 1]} /><meshStandardMaterial color="#b45309" roughness={0.7} /></mesh>
+        <mesh position={[0, 0.95, 0]}><cylinderGeometry args={[0.05, 0.05, 1.8, 6]} /><meshStandardMaterial color="#78350f" /></mesh>
+        <mesh position={[0.12, 1.15, 0]} rotation={[0, 0, 0.15]}><planeGeometry args={[1.3, 1.4]} /><meshStandardMaterial color="#ffffff" side={THREE.DoubleSide} /></mesh>
+      </group>
+    </group>
+  );
+}
+
+function HarborPond({ w, night }) {
+  const o = worldOutside(w, 9);
+  const water = useRef(), beam = useRef();
+  useFrame((st) => {
+    const t = st.clock.elapsedTime;
+    if (water.current) water.current.position.y = 0.09 + Math.sin(t * 1.4) * 0.03;
+    if (beam.current) beam.current.rotation.y = t * 0.9;
+  });
+  return (
+    <group position={[o[0], 0, o[1]]}>
+      <mesh position={[0, 0.04, 0]} rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[9, 36]} /><meshStandardMaterial color="#155e75" roughness={0.7} /></mesh>
+      <mesh ref={water} position={[0, 0.09, 0]} rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[8.4, 36]} /><meshStandardMaterial color="#38bdf8" transparent opacity={0.65} roughness={0.1} metalness={0.5} /></mesh>
+      <Boat position={[-3, 0, 2]} rot={0.5} />
+      <Boat position={[3.2, 0, -2.2]} rot={-0.9} />
+      <group position={[6.4, 0, 5.6]}>
+        <mesh position={[0, 2.4, 0]} castShadow><cylinderGeometry args={[0.7, 0.9, 4.8, 10]} /><meshStandardMaterial color="#f1f5f9" roughness={0.6} /></mesh>
+        <mesh position={[0, 5.1, 0]}><cylinderGeometry args={[0.95, 0.95, 0.7, 10]} /><meshStandardMaterial color="#dc2626" roughness={0.5} /></mesh>
+        <mesh position={[0, 5.6, 0]}><sphereGeometry args={[0.4, 10, 10]} /><meshStandardMaterial color="#fef08a" emissive="#facc15" emissiveIntensity={1 + night * 2} /></mesh>
+        <group ref={beam} position={[0, 5.6, 0]}>
+          <mesh position={[4.5, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
+            <coneGeometry args={[2.2, 9, 12, 1, true]} />
+            <meshBasicMaterial color="#fef9c3" transparent opacity={0.16 + night * 0.2} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} fog={false} />
+          </mesh>
+        </group>
+      </group>
+    </group>
+  );
+}
+
+function WorldLandmarks({ night }) {
+  return (
+    <group>
+      {WORLDS.map((w) => {
+        if (w.key === "zentrale") return <Fountain key={w.key} position={worldOutside(w, 9)} />;
+        if (w.key === "zahlen") return <FloatSyms key={w.key} w={w} />;
+        if (w.key === "formen") return <ShapeCluster key={w.key} w={w} />;
+        if (w.key === "bahnhof") return <TrainRing key={w.key} w={w} />;
+        if (w.key === "markt") return <MarketStalls key={w.key} w={w} />;
+        if (w.key === "hafen") return <HarborPond key={w.key} w={w} night={night} />;
+        return null;
+      })}
+    </group>
+  );
+}
+
+function Weather({ season, tod, night }) {
+  const mode = useRef("clear");
+  const timer = useRef(18 + Math.random() * 20);
+  const flash = useRef(0);
+  const rainRef = useRef(), fogRef = useRef(), darkRef = useRef(), flashRef = useRef();
+  const drops = useMemo(() => { const rnd = mulberry32(99); const out = []; for (let i = 0; i < 420; i++) out.push({ x: (rnd() - 0.5) * 210, y: rnd() * 24, z: (rnd() - 0.5) * 210 }); return out; }, []);
+  const banks = useMemo(() => { const rnd = mulberry32(55); const out = []; for (let i = 0; i < 8; i++) out.push({ x: (rnd() - 0.5) * 190, z: (rnd() - 0.5) * 190, y: 1.6 + rnd() * 2.2, s: 26 + rnd() * 22, ph: rnd() * 6.28, sp: 0.5 + rnd() * 0.8 }); return out; }, []);
+  useFrame((st, dt) => {
+    timer.current -= dt;
+    if (timer.current <= 0) {
+      timer.current = 24 + Math.random() * 26;
+      const r = Math.random();
+      const morning = tod > 6 && tod < 9.5;
+      mode.current = season === "herbst" ? (r < 0.4 ? "rain" : r < 0.55 ? "fog" : "clear")
+        : season === "winter" ? (r < 0.3 ? "fog" : "clear")
+        : morning ? (r < 0.35 ? "fog" : "clear")
+        : r < 0.1 ? "storm" : "clear";
+      if (mode.current === "storm" && flash.current <= 0) { flash.current = 0.12; AE.rumble(); }
+    }
+    if (mode.current === "storm" && Math.random() < dt * 0.22 && flash.current <= 0) { flash.current = 0.08 + Math.random() * 0.09; AE.rumble(); }
+    if (flash.current > 0) flash.current -= dt;
+    AE.weather = mode.current;
+    if (rainRef.current && mode.current === "rain") {
+      rainRef.current.visible = true;
+      const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+      q.setFromEuler(new THREE.Euler(0.12, 0, 0));
+      const v = new THREE.Vector3(), s = new THREE.Vector3(1, 1, 1);
+      drops.forEach((d, i) => {
+        d.y -= dt * 26; d.x += dt * 4;
+        if (d.y < 0) { d.y = 20 + Math.random() * 6; d.x = (Math.random() - 0.5) * 210; d.z = (Math.random() - 0.5) * 210; }
+        v.set(d.x, d.y, d.z); m.compose(v, q, s); rainRef.current.setMatrixAt(i, m);
+      });
+      rainRef.current.instanceMatrix.needsUpdate = true;
+    } else if (rainRef.current) rainRef.current.visible = false;
+    if (fogRef.current) {
+      fogRef.current.visible = mode.current === "fog";
+      if (fogRef.current.visible) fogRef.current.children.forEach((b, i) => {
+        const k = banks[i]; if (!k) return;
+        const t = st.clock.elapsedTime;
+        b.position.x = k.x + Math.sin(t * 0.11 * k.sp + k.ph) * 14;
+        b.position.z = k.z + Math.cos(t * 0.09 * k.sp + k.ph) * 10;
+      });
+    }
+    if (darkRef.current) darkRef.current.visible = mode.current === "storm";
+    if (flashRef.current) flashRef.current.material.opacity = Math.max(0, flash.current) * 5;
+  });
+  return (
+    <group>
+      <instancedMesh ref={rainRef} args={[undefined, undefined, 420]} visible={false} frustumCulled={false}>
+        <boxGeometry args={[0.03, 1.3, 0.03]} />
+        <meshBasicMaterial color="#a5c8e8" transparent opacity={0.55} />
+      </instancedMesh>
+      <group ref={fogRef} visible={false}>
+        {banks.map((b, i) => (
+          <mesh key={i} position={[b.x, b.y, b.z]} rotation={[-Math.PI / 2, 0, 0]} scale={[b.s, b.s * 0.4, 1]}>
+            <planeGeometry args={[1, 1]} />
+            <meshBasicMaterial map={fogTex()} transparent opacity={0.24} depthWrite={false} />
+          </mesh>
+        ))}
+      </group>
+      <mesh ref={darkRef} position={[0, 68, 0]} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+        <circleGeometry args={[240, 40]} />
+        <meshBasicMaterial color="#0f172a" transparent opacity={0.5} fog={false} depthWrite={false} />
+      </mesh>
+      <mesh ref={flashRef} position={[0, 70, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[260, 40]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0} blending={THREE.AdditiveBlending} fog={false} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
+const PICKUP_SPOTS = (() => {
+  const out = [];
+  for (let k = 0; k < 24; k++) { const a = (k * Math.PI) / 12; out.push({ id: "p" + k, x: Math.sin(a) * PROMENADE, z: Math.cos(a) * PROMENADE }); }
+  WORLDS.forEach((w) => out.push({ id: "s" + w.key, x: Math.sin(w.a0) * 33, z: Math.cos(w.a0) * 33 }));
+  return out;
+})();
+const PICK_SYMS = ["∑", "π", "%", "√", "x²", "=", "∆", "∞"];
+function Pickups({ viewRef, collected, onCollect }) {
+  const grp = useRef();
+  useFrame((st) => {
+    const t = st.clock.elapsedTime;
+    const p = viewRef.current.p;
+    if (!grp.current) return;
+    grp.current.children.forEach((g) => {
+      const sp = PICKUP_SPOTS.find((s) => s.id === g.userData.id);
+      if (!sp) return;
+      g.rotation.y = t * 1.7 + sp.x;
+      g.position.y = 1.5 + Math.sin(t * 2.1 + sp.z) * 0.22;
+      const dx = p.x - sp.x, dz = p.z - sp.z;
+      if (dx * dx + dz * dz < 3.1 && !collected[sp.id]) onCollect(sp.id);
+    });
+  });
+  return (
+    <group ref={grp}>
+      {PICKUP_SPOTS.map((sp, i) => collected[sp.id] ? null : (
+        <group key={sp.id} userData={{ id: sp.id }} position={[sp.x, 1.5, sp.z]}>
+          {i % 3 === 0 && <mesh><octahedronGeometry args={[0.42]} /><meshStandardMaterial color="#ffd43b" emissive="#f59e0b" emissiveIntensity={1.1} metalness={0.4} roughness={0.3} /></mesh>}
+          {i % 3 === 1 && <mesh><cylinderGeometry args={[0.36, 0.36, 0.1, 20]} /><meshStandardMaterial color="#ffd43b" emissive="#b45309" emissiveIntensity={0.8} metalness={0.6} roughness={0.25} /></mesh>}
+          {i % 3 === 2 && <mesh><planeGeometry args={[1, 1]} /><meshBasicMaterial map={symTex(PICK_SYMS[i % PICK_SYMS.length], "#7c2d12")} transparent side={THREE.DoubleSide} /></mesh>}
+        </group>
+      ))}
+    </group>
+  );
+}
+
+function SprintDust({ viewRef, keysRef }) {
+  const N = 22;
+  const mesh = useRef();
+  const parts = useRef([]);
+  if (!parts.current.length) parts.current = Array.from({ length: N }, () => ({ life: 0, x: 0, y: -9, z: 0, vx: 0, vy: 0, vz: 0 }));
+  useFrame((_, dt) => {
+    const m = mesh.current; if (!m) return;
+    const p = viewRef.current.p;
+    const spd = (keysRef.current && keysRef.current._speed) || 0;
+    if (spd > 19) {
+      const q = parts.current.find((x) => x.life <= 0);
+      if (q) { q.life = 0.5; q.x = p.x + (Math.random() - 0.5) * 0.8; q.y = 0.12; q.z = p.z + (Math.random() - 0.5) * 0.8; q.vx = (Math.random() - 0.5) * 1.4; q.vy = 0.8 + Math.random() * 0.8; q.vz = (Math.random() - 0.5) * 1.4; }
+    }
+    const m4 = new THREE.Matrix4();
+    let i = 0;
+    for (const q of parts.current) {
+      if (q.life > 0) {
+        q.life -= dt; q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt;
+        const s = 0.14 + (0.5 - q.life) * 0.55;
+        m4.makeScale(s, s, s); m4.setPosition(q.x, q.y, q.z);
+      } else { m4.makeScale(0.0001, 0.0001, 0.0001); m4.setPosition(0, -9, 0); }
+      m.setMatrixAt(i++, m4);
+    }
+    m.instanceMatrix.needsUpdate = true;
+  });
+  return (
+    <instancedMesh ref={mesh} args={[undefined, undefined, N]} frustumCulled={false}>
+      <planeGeometry args={[1, 1]} />
+      <meshBasicMaterial color="#d9c9a3" transparent opacity={0.45} depthWrite={false} side={THREE.DoubleSide} />
+    </instancedMesh>
+  );
+}
+
+function CompassWidget({ viewRef, doneMap }) {
+  const cvRef = useRef(null);
+  const [next, setNext] = useState(null);
+  useEffect(() => {
+    const id = setInterval(() => {
+      const cv = cvRef.current; if (!cv) return;
+      const p = viewRef.current.p, l = viewRef.current.l;
+      const heading = Math.atan2(l.x - p.x, l.z - p.z);
+      const ctx = cv.getContext("2d");
+      const S = cv.width, c = S / 2;
+      ctx.clearRect(0, 0, S, S);
+      ctx.save(); ctx.translate(c, c);
+      ctx.fillStyle = "rgba(30,27,75,0.55)"; ctx.beginPath(); ctx.arc(0, 0, c - 2, 0, 7); ctx.fill();
+      ctx.strokeStyle = "rgba(255,233,168,0.9)"; ctx.lineWidth = 2; ctx.stroke();
+      WORLDS.forEach((w) => {
+        const rx = w.center[0] - p.x, rz = w.center[2] - p.z;
+        const a = Math.atan2(rx, rz) - heading;
+        const d = Math.hypot(rx, rz);
+        const rr = Math.min(c - 9, (d * (c - 9)) / 110);
+        ctx.fillStyle = w.farbe;
+        ctx.beginPath(); ctx.arc(Math.sin(a) * rr, -Math.cos(a) * rr, 4, 0, 7); ctx.fill();
+      });
+      ctx.rotate(-heading);
+      ctx.fillStyle = "#fecaca"; ctx.font = "900 13px sans-serif"; ctx.textAlign = "center";
+      ctx.fillText("N", 0, -c + 13);
+      ctx.restore();
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath(); ctx.moveTo(c, c - 7); ctx.lineTo(c - 5, c + 5); ctx.lineTo(c + 5, c + 5); ctx.closePath(); ctx.fill();
+      let best = null, bd = 1e9;
+      WORLDS.forEach((w) => {
+        const allDone = w.stations.every((k) => { const st = STATIONS.find((s) => s.key === k); return st && st.lesson ? !!doneMap[st.lesson.id] : true; });
+        if (allDone) return;
+        const d = Math.hypot(w.center[0] - p.x, w.center[2] - p.z);
+        if (d < bd) { bd = d; best = w; }
+      });
+      setNext(best ? { key: best.key, icon: best.icon, kurz: best.kurz, d: bd, a: Math.atan2(best.center[0] - p.x, best.center[2] - p.z) - heading } : null);
+    }, 180);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div className="mp-noprint mp-wood mp-safe-b mp-safe-r" title="Kompass & nächste offene Welt" style={{ position: "absolute", right: 12, bottom: 8, zIndex: 20, borderRadius: 16, padding: 6, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+      <canvas ref={cvRef} width={92} height={92} style={{ display: "block" }} />
+      {next && (
+        <div style={{ fontSize: 10.5, fontWeight: 900, color: "#ffe9a8", textShadow: "0 1px 0 rgba(0,0,0,0.5)", whiteSpace: "nowrap" }}>
+          {next.icon} {next.kurz} · {Math.round(next.d)} m <span style={{ display: "inline-block", transform: `rotate(${next.a}rad)` }}>➤</span>
+        </div>
+      )}
+      {!next && <div style={{ fontSize: 10.5, fontWeight: 900, color: "#bbf7d0", textShadow: "0 1px 0 rgba(0,0,0,0.5)" }}>⭕ alle Welten besucht!</div>}
+    </div>
+  );
+}
+
 function PerfDpr() {
   const setDpr = useThree((s) => s.setDpr);
   return <PerformanceMonitor onChange={(api) => setDpr(1 + api.factor * 0.8)} />;
 }
-function Park({ onSelect, onWalk, activeKey, viewRef, setHover, doneMap, season, onFlyWorld, keysRef, markerRef, tod, orbitRef, onOrbitEnd, deco, introHoldRef }) {
+function Park({ onSelect, onWalk, activeKey, viewRef, setHover, doneMap, season, onFlyWorld, keysRef, markerRef, tod, orbitRef, onOrbitEnd, deco, introHoldRef, picked, onPick }) {
   const winter = season === "winter";
   const th = useMemo(() => todTheme(tod == null ? 13 : tod, season), [tod, season]);
   const groundCol = winter ? "#dfe9f2" : season === "herbst" ? "#c9b46a" : "#8bc34a";
@@ -5272,7 +5932,15 @@ function Park({ onSelect, onWalk, activeKey, viewRef, setHover, doneMap, season,
       <HorizonHills season={season} />
       <FlowerBeds season={season} />
       <Scenery season={season} />
+      <HighClouds night={th.night} />
       <AmbientLife season={season} night={th.night} deco={deco} />
+      <GroundDetails key={"gd" + season} season={season} />
+      <WorldLandmarks night={th.night} />
+      <PromenadeLamps night={th.night} />
+      <NightGlow night={th.night} />
+      <Weather season={season} tod={tod == null ? 13 : tod} night={th.night} />
+      <Pickups viewRef={viewRef} collected={picked || {}} onCollect={onPick} />
+      <SprintDust viewRef={viewRef} keysRef={keysRef} />
       {WORLDS.map((w) => (
         <group key={w.key} position={w.center} rotation={[0, w.a0, 0]}>
           <WorldDeco w={w} season={season} night={th.night} onFlyWorld={onFlyWorld} />
@@ -10910,6 +11578,8 @@ export default function App() {
   const worldIdxRef = useRef(0);
   const walkTargetRef = useRef(null);
   const keysRef = useRef({});
+  const [picked, setPicked] = useLocalJSON("mp7_pickups", {});
+  useEffect(() => { AE.tod = tod == null ? 13 : tod; }, [tod]);
   const doneMap = useMemo(() => {
     const m = {};
     LESSONS.forEach((L) => { const e = plan && plan[L.id]; m[L.id] = !!(e && e.done && KLASSEN.some((k) => e.done[k])); });
@@ -10926,7 +11596,7 @@ export default function App() {
   // WASD-Freilauf: kein Eingriff bei fokussierten Textfeldern
   // oder Vollbild-Overlay: Beamer, Live-Feedback, Werkzeug, Parkplan)
   const overlayRef = useRef(false);
-  useEffect(() => { overlayRef.current = !!(beamerLesson || liveOpen || tool || mapOpen); }, [beamerLesson, liveOpen, tool, mapOpen]);
+  useEffect(() => { overlayRef.current = !!(intro || beamerLesson || liveOpen || tool || mapOpen); }, [intro, beamerLesson, liveOpen, tool, mapOpen]);
   useEffect(() => {
     const down = (e) => {
       if (e.target && /^(input|textarea|select)$/i.test(e.target.tagName)) return;
@@ -10936,6 +11606,7 @@ export default function App() {
       else if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) keysRef.current[k] = true;
       else if (k === "q") keysRef.current.q = true;
       else if (k === "e") keysRef.current.e = true;
+      else if (k === "f") { keysRef.current.ego = !keysRef.current.ego; AE.sfx("click"); }
     };
     const up = (e) => { const k = e.key.toLowerCase(); keysRef.current[k] = false; };
     window.addEventListener("keydown", down);
@@ -10944,6 +11615,7 @@ export default function App() {
   }, []);
 
   const stationByKey = (k) => STATIONS.find((s) => s.key === k);
+  const onPick = (id) => { if (picked[id]) return; setPicked(Object.assign({}, picked, { [id]: true })); talerAward(2, "pickup_" + id, "⭐ Park-Entdeckung"); AE.sfx("success"); };
   const overview = () => { AE.sfx("close"); setActiveKey(null); setExamQuick(null); AE.mood = "default"; viewRef.current.fly = null; viewRef.current.p.set(0, 70, 85); viewRef.current.l.set(0, 0, 0); };
   const flyWorld = (w) => {
     AE.sfx("open"); AE.mood = w.key;
@@ -11062,7 +11734,7 @@ export default function App() {
           .mp-ansbox { border: 1.5px solid #44403c !important; background-color: #fff !important; background-size: 0.5cm 0.5cm !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; page-break-inside: avoid; }
         }
       `}</style>
-      <Park onSelect={selectStation} onWalk={walkTo} activeKey={activeKey} viewRef={viewRef} setHover={setHover} doneMap={doneMap} season={season} onFlyWorld={flyWorld} keysRef={keysRef} markerRef={walkTargetRef} tod={tod} orbitRef={orbitRef} onOrbitEnd={() => setOrbit(false)} deco={shop.owned || {}} introHoldRef={introHoldRef} />
+      <Park onSelect={selectStation} onWalk={walkTo} activeKey={activeKey} viewRef={viewRef} setHover={setHover} doneMap={doneMap} season={season} onFlyWorld={flyWorld} keysRef={keysRef} markerRef={walkTargetRef} tod={tod} orbitRef={orbitRef} onOrbitEnd={() => setOrbit(false)} deco={shop.owned || {}} introHoldRef={introHoldRef} picked={picked} onPick={onPick} />
 
       {/* HUD oben: RCT-Werkzeugbalken, bündig am oberen Rand über die volle Breite */}
       <div className="mp-noprint mp-wood mp-hud-top mp-safe-t mp-safe-l mp-safe-r" style={{ position: "absolute", top: 10, left: 14, right: 14, zIndex: 20, display: "flex", alignItems: "center", gap: 12, padding: "6px 18px", borderRadius: 999, boxShadow: "0 10px 30px rgba(15,23,42,0.25), 0 2px 8px rgba(15,23,42,0.18)", pointerEvents: "none", whiteSpace: "nowrap" }}>
@@ -11119,10 +11791,11 @@ export default function App() {
 
       {/* RCT-Statuszeile: schlanke Hinweiszeile unten – Navigation läuft über den Parkplan (oben rechts) */}
       <div className="mp-noprint mp-wood mp-safe-b" style={{ position: "absolute", bottom: 8, left: "50%", transform: "translateX(-50%)", zIndex: 20, maxWidth: "96vw", borderRadius: 999, padding: "5px 18px", textAlign: "center", fontSize: 12, fontWeight: 800, color: "#ffedd5", textShadow: "0 1px 0 rgba(0,0,0,0.4)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {uiHint || (hover ? "⬅ " + hover + " – anklicken zum Öffnen" : "🕹️ WASD: laufen · Shift: Sprint · Q/E: umsehen · Rasen-Klick: Spaziergang · 🧭 Parkplan (oben rechts): Welten, Stationen & Schulaufgaben")}
+        {uiHint || (hover ? "⬅ " + hover + " – anklicken zum Öffnen" : "🕹️ WASD: laufen · Shift: Sprint · Q/E: umsehen · F: Ich-Ansicht · Rasen-Klick: Spaziergang · 🧭 Parkplan (oben rechts): Welten, Stationen & Schulaufgaben")}
       </div>
 
       {/* 🧭 Parkplan-Overlay mit Routenübersicht */}
+      <CompassWidget viewRef={viewRef} doneMap={doneMap} />
       <AnimatePresence>
         {mapOpen && (
           <motion.div {...THEME.motion.backdrop} onClick={() => { setMapOpen(false); AE.sfx("close"); }}
