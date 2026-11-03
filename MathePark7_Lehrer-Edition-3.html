@@ -5573,28 +5573,72 @@ function fogTex() {
   return FOG_TEX;
 }
 
+function aePlay(fn) { if (AE.ensure() && AE.sfxOn) fn(AE.ctx.currentTime); }
+function landmarkClick(e, cdRef, minMs, fn) {
+  e.stopPropagation();
+  const now = performance.now();
+  if (now - cdRef.current < minMs) return;
+  cdRef.current = now;
+  fn();
+  document.body.style.cursor = "pointer";
+}
+
 function Fountain({ position }) {
   const water = useRef();
-  useFrame((st) => {
+  const coinRef = useRef();
+  const splash = useRef(0);
+  const cd = useRef(0);
+  const coinT = useRef(-1);
+  useFrame((st, dt) => {
     const t = st.clock.elapsedTime;
-    if (water.current) { water.current.position.y = 0.62 + Math.sin(t * 2.1) * 0.03; water.current.scale.setScalar(1 + Math.sin(t * 3.3) * 0.02); }
+    if (water.current) {
+      splash.current = Math.max(0, splash.current - dt * 1.2);
+      water.current.position.y = 0.62 + Math.sin(t * 2.1) * 0.03 + splash.current * 0.3;
+      water.current.scale.setScalar(1 + Math.sin(t * 3.3) * 0.02 + splash.current * 0.35);
+    }
+    const c = coinRef.current;
+    if (c && coinT.current >= 0) {
+      coinT.current += dt;
+      const f = Math.min(1, coinT.current / 0.9);
+      c.visible = true;
+      c.position.set((1 - f) * 5.2, (1 - f) * 2.8 + f * 0.7 + Math.sin(f * Math.PI) * 2.4, (1 - f) * 5.2);
+      c.rotation.y = t * 14;
+      if (f >= 1) { coinT.current = -1; c.visible = false; splash.current = 1; aePlay((tt) => AE.noiseBurst(tt, 0.35, 420, 0.3)); }
+    }
+  });
+  const click = (e) => landmarkClick(e, cd, 2200, () => {
+    coinT.current = 0;
+    aePlay((tt) => { AE.tone(1150, tt, 0.4, "sine", 0.09, AE.sg, 480); });
+    talerAward(5, "brunnen_muenze", "⛲ Brunnen-Münze");
+    talerAdd(2);
+    AE.sfx("success");
   });
   return (
     <group position={position}>
-      <mesh position={[0, 0.25, 0]} castShadow><cylinderGeometry args={[4.2, 4.5, 0.5, 28]} /><meshStandardMaterial color="#94a3b8" roughness={0.6} /></mesh>
+      <mesh position={[0, 0.25, 0]} castShadow onClick={click} onPointerOver={() => { document.body.style.cursor = "pointer"; }} onPointerOut={() => { document.body.style.cursor = "auto"; }}>
+        <cylinderGeometry args={[4.2, 4.5, 0.5, 28]} /><meshStandardMaterial color="#94a3b8" roughness={0.6} />
+      </mesh>
       <mesh ref={water} position={[0, 0.62, 0]} rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[3.6, 28]} /><meshStandardMaterial color="#38bdf8" transparent opacity={0.75} roughness={0.15} metalness={0.4} /></mesh>
       <mesh position={[0, 1.4, 0]} castShadow><cylinderGeometry args={[0.35, 0.5, 2.4, 12]} /><meshStandardMaterial color="#94a3b8" roughness={0.6} /></mesh>
       <mesh position={[0, 2.75, 0]}><sphereGeometry args={[0.5, 14, 14]} /><meshStandardMaterial color="#bae6fd" roughness={0.2} /></mesh>
       <mesh position={[0, 3.15, 0]}><coneGeometry args={[0.3, 1.7, 10]} /><meshStandardMaterial color="#bae6fd" transparent opacity={0.55} /></mesh>
+      <mesh ref={coinRef} visible={false}><cylinderGeometry args={[0.22, 0.22, 0.06, 14]} /><meshStandardMaterial color="#ffd43b" emissive="#b45309" emissiveIntensity={0.7} metalness={0.7} roughness={0.25} /></mesh>
     </group>
   );
 }
 
 function FloatSyms({ w }) {
   const o = worldOutside(w, 9);
+  const cd = useRef(0);
   const items = [["7", -5, 5.5], ["∑", 0.5, 7.6], ["2", 5.5, 4.6]];
+  const click = (e) => landmarkClick(e, cd, 2500, () => {
+    aePlay((tt) => { AE.tone(600, tt, 0.5, "sine", 0.12, AE.sg, 1900); });
+    talerAward(5, "symbole_klang", "🔢 Symbol-Klang");
+    talerAdd(1);
+    AE.sfx("success");
+  });
   return (
-    <group position={[o[0], 0, o[1]]} rotation={[0, w.a0, 0]}>
+    <group position={[o[0], 0, o[1]]} rotation={[0, w.a0, 0]} onClick={click} onPointerOver={() => { document.body.style.cursor = "pointer"; }} onPointerOut={() => { document.body.style.cursor = "auto"; }}>
       {items.map(([s, x, y], i) => (
         <Bob key={s} amp={0.4} speed={1.1 + i * 0.3} y={y} position={[x, 0, 6]}>
           <Spin speed={0.5 + i * 0.2}><mesh><planeGeometry args={[2.6, 2.6]} /><meshBasicMaterial map={symTex(s, "#b45309")} transparent side={THREE.DoubleSide} /></mesh></Spin>
@@ -5607,9 +5651,16 @@ function FloatSyms({ w }) {
 function ShapeCluster({ w }) {
   const o = worldOutside(w, 9);
   const g = useRef();
+  const cd = useRef(0);
   useFrame((st) => { if (g.current) g.current.rotation.y = st.clock.elapsedTime * 0.25; });
+  const click = (e) => landmarkClick(e, cd, 2500, () => {
+    aePlay((tt) => { [523, 659, 784].forEach((f, i) => AE.tone(f, tt + i * 0.07, 0.3, "triangle", 0.1, AE.sg)); });
+    talerAward(5, "formen_akkord", "📐 Formen-Akkord");
+    talerAdd(1);
+    AE.sfx("success");
+  });
   return (
-    <group position={[o[0], 0, o[1]]}>
+    <group position={[o[0], 0, o[1]]} onClick={click} onPointerOver={() => { document.body.style.cursor = "pointer"; }} onPointerOut={() => { document.body.style.cursor = "auto"; }}>
       <group ref={g}>
         <mesh position={[-3, 2.2, 0]} castShadow><torusGeometry args={[1.5, 0.5, 12, 24]} /><meshStandardMaterial color="#3b82f6" roughness={0.35} metalness={0.2} /></mesh>
         <mesh position={[0.5, 2.7, 1.5]} castShadow><icosahedronGeometry args={[1.4]} /><meshStandardMaterial color="#93c5fd" flatShading roughness={0.5} /></mesh>
@@ -5623,16 +5674,27 @@ function ShapeCluster({ w }) {
 function TrainRing({ w }) {
   const bez = (w.bez || 19) + 5.5;
   const train = useRef();
-  useFrame((st) => {
+  const boost = useRef(0);
+  const cd = useRef(0);
+  const ang = useRef(0);
+  useFrame((st, dt) => {
     if (!train.current) return;
-    const t = st.clock.elapsedTime * 0.1;
-    train.current.position.set(w.center[0] + Math.sin(t) * bez, 0.55, w.center[2] + Math.cos(t) * bez);
-    train.current.rotation.y = Math.PI / 2 + t;
+    boost.current = Math.max(0, boost.current - dt * 0.5);
+    ang.current += dt * (0.1 + boost.current * 0.55);
+    train.current.position.set(w.center[0] + Math.sin(ang.current) * bez, 0.55, w.center[2] + Math.cos(ang.current) * bez);
+    train.current.rotation.y = Math.PI / 2 + ang.current;
+  });
+  const click = (e) => landmarkClick(e, cd, 2500, () => {
+    boost.current = 1;
+    aePlay((tt) => { AE.tone(622, tt, 0.45, "sine", 0.16, AE.sg); AE.tone(466, tt + 0.4, 0.7, "sine", 0.16, AE.sg); });
+    talerAward(5, "zug_pfeife", "🚂 Zug-Pfeife");
+    talerAdd(1);
+    AE.sfx("open");
   });
   return (
     <group>
       <mesh position={[w.center[0], 0.1, w.center[2]]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[bez, 0.09, 8, 64]} /><meshStandardMaterial color="#64748b" /></mesh>
-      <group ref={train}>
+      <group ref={train} onClick={click} onPointerOver={() => { document.body.style.cursor = "pointer"; }} onPointerOut={() => { document.body.style.cursor = "auto"; }}>
         <mesh castShadow><boxGeometry args={[1.6, 1.1, 3.4]} /><meshStandardMaterial color="#0369a1" roughness={0.4} /></mesh>
         <mesh position={[0, 0.75, -0.4]} castShadow><boxGeometry args={[1.3, 0.7, 1.6]} /><meshStandardMaterial color="#e2e8f0" /></mesh>
         <mesh position={[0, 1.35, 1.1]}><cylinderGeometry args={[0.14, 0.2, 0.7, 8]} /><meshStandardMaterial color="#334155" /></mesh>
@@ -5651,8 +5713,15 @@ function TrainRing({ w }) {
 
 function MarketStalls({ w }) {
   const o = worldOutside(w, 9);
+  const cd = useRef(0);
+  const click = (e) => landmarkClick(e, cd, 2000, () => {
+    aePlay((tt) => { AE.bellTone(1568, tt, 0.3, 0.16, AE.sg); AE.bellTone(2093, tt + 0.12, 0.4, 0.14, AE.sg); });
+    talerAward(5, "markt_klingel", "🛒 Markt-Klingel");
+    talerAdd(1);
+    AE.sfx("success");
+  });
   return (
-    <group position={[o[0], 0, o[1]]} rotation={[0, w.a0, 0]}>
+    <group position={[o[0], 0, o[1]]} rotation={[0, w.a0, 0]} onClick={click} onPointerOver={() => { document.body.style.cursor = "pointer"; }} onPointerOut={() => { document.body.style.cursor = "auto"; }}>
       {[-6, 0, 6].map((x, i) => (
         <group key={i} position={[x, 0, 6]}>
           <mesh position={[0, 1.1, 0]} castShadow><boxGeometry args={[3.2, 2.2, 2]} /><meshStandardMaterial color={["#f8fafc", "#fef3c7", "#dcfce7"][i]} roughness={0.8} /></mesh>
@@ -5689,13 +5758,15 @@ function Boat({ position, rot }) {
 
 function HarborPond({ w, night }) {
   const o = worldOutside(w, 9);
-  const water = useRef(), beam = useRef();
+  const water = useRef(), beam = useRef(), beamMat = useRef();
   const base = useRef(null);
+  const flash = useRef(0);
+  const cd = useRef(0);
   useLayoutEffect(() => {
     const g = water.current && water.current.geometry;
     if (g && !base.current) base.current = g.attributes.position.array.slice();
   }, []);
-  useFrame((st) => {
+  useFrame((st, dt) => {
     const t = st.clock.elapsedTime;
     const mesh = water.current;
     if (mesh && base.current) {
@@ -5709,6 +5780,15 @@ function HarborPond({ w, night }) {
       mesh.geometry.computeVertexNormals();
     }
     if (beam.current) beam.current.rotation.y = t * 0.9;
+    flash.current = Math.max(0, flash.current - dt * 1.6);
+    if (beamMat.current) beamMat.current.opacity = 0.16 + night * 0.2 + flash.current * 0.55;
+  });
+  const lightClick = (e) => landmarkClick(e, cd, 2500, () => {
+    flash.current = 1;
+    aePlay((tt) => { AE.tone(98, tt, 1.1, "sawtooth", 0.1, AE.sg, 82); AE.noiseBurst(tt + 0.15, 0.5, 900, 0.06, 300); });
+    talerAward(5, "leuchtturm_blitz", "🗼 Leuchtturm-Blitz");
+    talerAdd(2);
+    AE.sfx("success");
   });
   return (
     <group position={[o[0], 0, o[1]]}>
@@ -5716,14 +5796,14 @@ function HarborPond({ w, night }) {
       <mesh ref={water} position={[0, 0.09, 0]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[16.8, 16.8, 26, 26]} /><meshStandardMaterial color="#38bdf8" transparent opacity={0.72} roughness={0.08} metalness={0.6} alphaMap={circleAlphaTex()} /></mesh>
       <Boat position={[-3, 0, 2]} rot={0.5} />
       <Boat position={[3.2, 0, -2.2]} rot={-0.9} />
-      <group position={[6.4, 0, 5.6]}>
+      <group position={[6.4, 0, 5.6]} onClick={lightClick} onPointerOver={() => { document.body.style.cursor = "pointer"; }} onPointerOut={() => { document.body.style.cursor = "auto"; }}>
         <mesh position={[0, 2.4, 0]} castShadow><cylinderGeometry args={[0.7, 0.9, 4.8, 10]} /><meshStandardMaterial color="#f1f5f9" roughness={0.6} /></mesh>
         <mesh position={[0, 5.1, 0]}><cylinderGeometry args={[0.95, 0.95, 0.7, 10]} /><meshStandardMaterial color="#dc2626" roughness={0.5} /></mesh>
-        <mesh position={[0, 5.6, 0]}><sphereGeometry args={[0.4, 10, 10]} /><meshStandardMaterial color="#fef08a" emissive="#facc15" emissiveIntensity={1 + night * 2} /></mesh>
+        <mesh position={[0, 5.6, 0]}><sphereGeometry args={[0.4, 10, 10]} /><meshStandardMaterial color="#fef08a" emissive="#facc15" emissiveIntensity={1 + night * 2 + flash.current * 2} /></mesh>
         <group ref={beam} position={[0, 5.6, 0]}>
           <mesh position={[4.5, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
             <coneGeometry args={[2.2, 9, 12, 1, true]} />
-            <meshBasicMaterial color="#fef9c3" transparent opacity={0.16 + night * 0.2} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} fog={false} />
+            <meshBasicMaterial ref={beamMat} color="#fef9c3" transparent opacity={0.16 + night * 0.2} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} fog={false} />
           </mesh>
         </group>
       </group>
