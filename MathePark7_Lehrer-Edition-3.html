@@ -6,13 +6,11 @@
 <title>MathePark 7 · Lehrer-Edition (Realschule Bayern)</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎢</text></svg>">
 <!--
-  MathePark 7 – Lehrer-Edition, Standalone-Export vom 02.11.2026
-  Realschule Bayern, Jahrgangsstufe 7 (React-App als Einzel datei)
-  Hinweis: Die JavaScript-Runtime (React, three.js, framer-motion) wird beim
-  Oeffnen aus dem Internet geladen (esm.sh/unpkg, CORS-faehig). Beim ersten
-  Start ist also eine Internetverbindung noetig; Fortschritte/Archiv liegen
-  lokal im Browser (localStorage) – auf file:// funktioniert das in Chrome,
-  Firefox und Edge. Doppelt anklicken genuegt.
+  MathePark 7 – Lehrer-Edition, OFFLINE-fähig.
+  Realschule Bayern, Jahrgangsstufe 7 (React-App als Einzeldatei).
+  Alle Bibliotheken (React, three.js, drei, fiber, postprocessing, framer-motion)
+  sind in vendor/app.bundle.js gebündelt – die App braucht KEIN Internet mehr.
+  Nach Änderungen am Inline-JSX (script#mp7-src):  npm install && npm run build
 -->
 <style>
   html, body { margin: 0; padding: 0; height: 100%; }
@@ -23,37 +21,22 @@
   #mp7-splash h1 { font-size: 22px; margin: 0; }
   #mp7-splash p { margin: 0; font-size: 14px; color: #334155; max-width: 480px; }
 </style>
-<script async src="https://unpkg.com/es-module-shims@1.10.0/dist/es-module-shims.js"></script>
-<script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@18.3.1",
-    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?deps=react@18.3.1",
-    "three": "https://esm.sh/three@0.160.1",
-    "@react-three/fiber": "https://esm.sh/@react-three/fiber@8.17.10?deps=react@18.3.1,react-dom@18.3.1,three@0.160.1",
-    "@react-three/drei": "https://esm.sh/@react-three/drei@9.105.6?deps=react@18.3.1,react-dom@18.3.1,three@0.160.1,@react-three/fiber@8.17.10",
-    "@react-three/postprocessing": "https://esm.sh/@react-three/postprocessing@2.16.3?deps=react@18.3.1,react-dom@18.3.1,three@0.160.1,@react-three/fiber@8.17.10",
-    "framer-motion": "https://esm.sh/framer-motion@11.2.10?deps=react@18.3.1"
-  }
-}
-</script>
-<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 </head>
 <body>
 <div id="mp7-root">
   <div id="mp7-splash">
     <h1>🎢 MathePark 7 – Lehrer-Edition</h1>
-    <p>Die App wird geladen … (beim ersten Start werden React &amp; three.js aus dem Internet geholt – bitte kurz warten)</p>
+    <p>Die App wird geladen … (vollständig offline, keine Internetverbindung nötig)</p>
     <p id="mp7-splash-msg" style="font-weight: 600; color: #b91c1c;"></p>
   </div>
 </div>
 <script>
   window.addEventListener("error", function (e) {
     var s = document.getElementById("mp7-splash-msg");
-    if (s) { s.textContent = "Ladefehler: " + (e.message || e.type) + " – bitte Internetverbindung prüfen und neu laden."; }
+    if (s) { s.textContent = "Ladefehler: " + (e.message || e.type) + " – Datei beschädigt? Bitte vendor/app.bundle.js prüfen (npm run build)."; }
   });
 </script>
-<script type="text/babel" data-type="module" data-presets="react">
+<script type="text/plain" id="mp7-src">
 import { createRoot } from "react-dom/client";
 
 import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from "react";
@@ -9006,7 +8989,8 @@ function ExamPanel({ onClose, onOpenSpecial, onBuilt, onConfetti, jplan, initFor
       `<head><meta charset="utf-8"><title>${rtH(fmt.name)} · Mathematik 7</title>`,
       `<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->`,
       `<style>body{font-family:'Segoe UI',Arial,sans-serif;font-size:11pt}p{margin:4pt 0}</style></head>`,
-      `<body>${body.join("")}</body></html>`,
+      `<body>${body.join("")}
+</body></html>`,
     ].join("");
     downloadBlob(fnameB("doc"), html, "application/msword");
   };
@@ -12524,5 +12508,6 @@ const __mp7container = document.getElementById("mp7-root");
 __mp7container.textContent = "";
 createRoot(__mp7container).render(<App />);
 </script>
+<script type="module" src="./vendor/app.bundle.js"></script>
 </body>
 </html>

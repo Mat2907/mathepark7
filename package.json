@@ -1,0 +1,12 @@
+{
+  "name": "mathepark7",
+  "private": true,
+  "version": "1.0.0",
+  "description": "MathePark 7 – Lehrer-Edition (offline-fähig: vendor/app.bundle.js wird aus der HTML-Datei gebaut)",
+  "scripts": {
+    "build": "node tools/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}
