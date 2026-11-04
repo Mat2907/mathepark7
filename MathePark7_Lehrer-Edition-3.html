@@ -32,6 +32,7 @@
     "three": "https://esm.sh/three@0.160.1",
     "@react-three/fiber": "https://esm.sh/@react-three/fiber@8.17.10?deps=react@18.3.1,react-dom@18.3.1,three@0.160.1",
     "@react-three/drei": "https://esm.sh/@react-three/drei@9.105.6?deps=react@18.3.1,react-dom@18.3.1,three@0.160.1,@react-three/fiber@8.17.10",
+    "@react-three/postprocessing": "https://esm.sh/@react-three/postprocessing@2.16.3?deps=react@18.3.1,react-dom@18.3.1,three@0.160.1,@react-three/fiber@8.17.10",
     "framer-motion": "https://esm.sh/framer-motion@11.2.10?deps=react@18.3.1"
   }
 }
@@ -58,6 +59,7 @@ import { createRoot } from "react-dom/client";
 import React, { useState, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Html, Sparkles, Stars, PerformanceMonitor } from "@react-three/drei";
+import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
 import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 
@@ -3764,30 +3766,49 @@ function blotch(ctx, size, n, colors, rMin, rMax, aMax) {
   }
   ctx.globalAlpha = 1;
 }
+const MP7_TOUCH = (typeof navigator !== "undefined") && (/iPad|iPhone|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && window.matchMedia && window.matchMedia("(pointer: coarse)").matches));
+const MP7_HIRES = MP7_TOUCH && (window.devicePixelRatio >= 2);
 function grassTex(season) {
-  return makeTex("grass_" + season, 256, (ctx, s) => {
+  const hi = MP7_HIRES;
+  return makeTex("grass_" + season + (hi ? "_hi" : ""), hi ? 512 : 256, (ctx, s) => {
     ctx.fillStyle = season === "winter" ? "#dfe8f0" : season === "herbst" ? "#9aa14b" : "#5da838";
     ctx.fillRect(0, 0, s, s);
     const cols = season === "winter"
       ? ["#eef4fa", "#cdd9e6", "#e4ecf3"]
       : season === "herbst" ? ["#adb659", "#7d8840", "#b9a94e"] : ["#4f9a2e", "#6fbf46", "#468c29", "#7ec850"];
-    blotch(ctx, s, 90, cols, 6, 26);
+    blotch(ctx, s, hi ? 260 : 90, cols, 3, hi ? 30 : 26);
+    if (hi) blotch(ctx, s, 500, cols.map((c) => c), 1, 4, 0.5);
     ctx.strokeStyle = season === "winter" ? "#f2f7fb" : season === "herbst" ? "#b3a855" : "#6ab545";
     ctx.globalAlpha = 0.35; ctx.lineWidth = 1;
-    for (let i = 0; i < 220; i++) { const x = Math.random() * s, y = Math.random() * s; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 1.5, y - 4 - Math.random() * 4); ctx.stroke(); }
+    const n = hi ? 700 : 220;
+    for (let i = 0; i < n; i++) { const x = Math.random() * s, y = Math.random() * s; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 1.5, y - 4 - Math.random() * 4); ctx.stroke(); }
+    if (hi) {
+      ctx.globalAlpha = 0.22; ctx.lineWidth = 0.6;
+      for (let i = 0; i < 900; i++) { const x = Math.random() * s, y = Math.random() * s; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 0.8, y - 2.5 - Math.random() * 2.5); ctx.stroke(); }
+    }
     ctx.globalAlpha = 1;
   }, 22);
 }
 function sandTex() {
-  return makeTex("sand", 128, (ctx, s) => {
+  const hi = MP7_HIRES;
+  return makeTex("sand" + (hi ? "_hi" : ""), hi ? 256 : 128, (ctx, s) => {
     ctx.fillStyle = "#e8d9a8"; ctx.fillRect(0, 0, s, s);
-    blotch(ctx, s, 60, ["#dcc98f", "#f0e3ba", "#d4bf84"], 1.5, 5, 0.25);
+    blotch(ctx, s, hi ? 240 : 60, ["#dcc98f", "#f0e3ba", "#d4bf84"], 1, hi ? 6 : 5, 0.25);
+    if (hi) {
+      ctx.globalAlpha = 0.18;
+      for (let i = 0; i < 700; i++) {
+        ctx.fillStyle = Math.random() < 0.5 ? "#d4bf84" : "#f2e6c0";
+        ctx.fillRect(Math.random() * s, Math.random() * s, 1, 1);
+      }
+      ctx.globalAlpha = 1;
+    }
   }, 6);
 }
 function cobbleTex() {
-  return makeTex("cobble", 256, (ctx, s) => {
+  const hi = MP7_HIRES;
+  return makeTex("cobble" + (hi ? "_hi" : ""), hi ? 512 : 256, (ctx, s) => {
     ctx.fillStyle = "#b8b0a2"; ctx.fillRect(0, 0, s, s);
-    const r = 16;
+    const r = hi ? 22 : 16;
     for (let y = 0; y * r * 0.8 < s + r; y++) {
       for (let x = -1; x * r < s + r; x++) {
         const ox = (y % 2) * r / 2;
@@ -3796,6 +3817,16 @@ function cobbleTex() {
         ctx.beginPath();
         ctx.ellipse(x * r + ox + r / 2 + (Math.random() * 4 - 2), y * r * 0.8 + r / 2 + (Math.random() * 3 - 1.5), r * 0.42, r * 0.36, Math.random() * 0.4, 0, 7);
         ctx.fill();
+        if (hi) {
+          ctx.fillStyle = "rgba(255,252,240," + (0.12 + Math.random() * 0.18) + ")";
+          ctx.beginPath();
+          ctx.ellipse(x * r + ox + r / 2 - r * 0.1, y * r * 0.8 + r / 2 - r * 0.1, r * 0.3, r * 0.2, 0, 0, 7);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(60,52,40,0.35)"; ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.ellipse(x * r + ox + r / 2, y * r * 0.8 + r / 2, r * 0.42, r * 0.36, 0, 0, 7);
+          ctx.stroke();
+        }
       }
     }
   }, 8);
@@ -3830,9 +3861,10 @@ function makeBump(key, size, draw, repeat, repeatY) {
   return t;
 }
 function grassBumpTex(season) {
-  return makeBump("gbump_" + season, 128, (ctx, s) => {
+  const hi = MP7_HIRES;
+  return makeBump("gbump_" + season + (hi ? "_hi" : ""), hi ? 256 : 128, (ctx, s) => {
     ctx.fillStyle = "#808080"; ctx.fillRect(0, 0, s, s);
-    for (let i = 0; i < 400; i++) {
+    for (let i = 0; i < (hi ? 1400 : 400); i++) {
       const g = 100 + Math.floor(Math.random() * 110);
       ctx.fillStyle = "rgb(" + g + "," + g + "," + g + ")";
       ctx.globalAlpha = 0.5;
@@ -3842,7 +3874,8 @@ function grassBumpTex(season) {
   }, 22);
 }
 function cobbleBumpTex() {
-  return makeBump("cbump", 256, (ctx, s) => {
+  const hi = MP7_HIRES;
+  return makeBump("cbump" + (hi ? "_hi" : ""), hi ? 512 : 256, (ctx, s) => {
     ctx.fillStyle = "#303030"; ctx.fillRect(0, 0, s, s);
     const r = 16;
     for (let y = 0; y * r * 0.8 < s + r; y++) {
@@ -3858,7 +3891,8 @@ function cobbleBumpTex() {
   }, 8);
 }
 function sandBumpTex() {
-  return makeBump("sbump", 128, (ctx, s) => {
+  const hi = MP7_HIRES;
+  return makeBump("sbump" + (hi ? "_hi" : ""), hi ? 256 : 128, (ctx, s) => {
     ctx.fillStyle = "#7a7a7a"; ctx.fillRect(0, 0, s, s);
     for (let i = 0; i < 14; i++) {
       const g = 120 + Math.floor(Math.random() * 70);
@@ -5237,6 +5271,7 @@ function CameraRig({ viewRef, keysRef, orbitRef, onOrbitEnd, introHoldRef }) {
       if (kk.s || kk.arrowdown) f -= 1;
       if (kk.a || kk.arrowleft) s -= 1;
       if (kk.d || kk.arrowright) s += 1;
+      if (kk.joy) { f += -kk.joy.y; s += kk.joy.x; if (Math.hypot(kk.joy.x, kk.joy.y) > 0.88) kk.shift = true; }
       if (f || s) viewRef.current.fly = null; // Anflug endet, sobald man selbst läuft
       const p = viewRef.current.p, l = viewRef.current.l;
       const dir = new THREE.Vector3(l.x - p.x, 0, l.z - p.z);
@@ -5967,6 +6002,47 @@ function SprintDust({ viewRef, keysRef }) {
   );
 }
 
+function TouchJoystick({ keysRef }) {
+  const baseRef = useRef(null);
+  const knobRef = useRef(null);
+  const st = useRef({ id: null, cx: 0, cy: 0 });
+  const R = 52;
+  const setKnob = (dx, dy) => {
+    const d = Math.hypot(dx, dy) || 1;
+    const k = Math.min(1, d / R);
+    const nx = (dx / d) * R * k, ny = (dy / d) * R * k;
+    if (knobRef.current) knobRef.current.style.transform = `translate(${nx}px, ${ny}px)`;
+    keysRef.current.joy = { x: nx / R, y: ny / R };
+  };
+  const end = () => {
+    st.current.id = null;
+    if (knobRef.current) knobRef.current.style.transform = "translate(0px, 0px)";
+    keysRef.current.joy = null;
+    keysRef.current.shift = false;
+  };
+  return (
+    <div className="mp-noprint mp-safe-b mp-safe-l" style={{ position: "absolute", left: 18, bottom: 14, zIndex: 22, touchAction: "none" }}
+      onPointerDown={(e) => {
+        if (st.current.id !== null) return;
+        st.current.id = e.pointerId;
+        const r = baseRef.current.getBoundingClientRect();
+        st.current.cx = r.left + r.width / 2; st.current.cy = r.top + r.height / 2;
+        baseRef.current.setPointerCapture(e.pointerId);
+        setKnob(e.clientX - st.current.cx, e.clientY - st.current.cy);
+        AE.sfx("click");
+      }}
+      onPointerMove={(e) => { if (e.pointerId === st.current.id) setKnob(e.clientX - st.current.cx, e.clientY - st.current.cy); }}
+      onPointerUp={(e) => { if (e.pointerId === st.current.id) end(); }}
+      onPointerCancel={(e) => { if (e.pointerId === st.current.id) end(); }}
+    >
+      <div ref={baseRef} style={{ width: 124, height: 124, borderRadius: 999, background: "rgba(30,27,75,0.4)", border: "2px solid rgba(255,233,168,0.55)", position: "relative", backdropFilter: "blur(4px)" }}>
+        <div ref={knobRef} style={{ position: "absolute", left: "50%", top: "50%", width: 52, height: 52, marginLeft: -26, marginTop: -26, borderRadius: 999, background: "rgba(255,233,168,0.85)", boxShadow: "0 2px 10px rgba(0,0,0,0.4)" }} />
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 900, color: "rgba(255,233,168,0.9)", pointerEvents: "none" }}>LAUFEN</div>
+      </div>
+    </div>
+  );
+}
+
 function CompassWidget({ viewRef, doneMap }) {
   const cvRef = useRef(null);
   const [next, setNext] = useState(null);
@@ -6184,7 +6260,7 @@ function Park({ onSelect, onWalk, activeKey, viewRef, setHover, doneMap, season,
   };
   return (
     <div style={{ position: "absolute", inset: 0 }} onPointerDown={dragDown} onPointerMove={dragMove} onPointerUp={dragUp} onPointerLeave={dragUp}>
-    <Canvas shadows="soft" dpr={[1, 1.8]} camera={{ position: [0, 70, 85], fov: 55, near: 0.1, far: 700 }} gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.1 }}>
+    <Canvas shadows="soft" dpr={[1, MP7_HIRES ? 2.2 : 1.8]} camera={{ position: [0, 70, 85], fov: 55, near: 0.1, far: 700 }} gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.1, powerPreference: "high-performance" }}>
       <color attach="background" args={[th.bg]} />
       {/* Passt die Pixelrate automatisch an (dpr-Grenzen oben im Canvas):
           bei Lastabfall Auflösung senken, bei Entlastung sanft erhöhen. */}
@@ -6248,6 +6324,11 @@ function Park({ onSelect, onWalk, activeKey, viewRef, setHover, doneMap, season,
       <WalkMarker markerRef={markerRef} />
       {(winter || (deco && deco.schnee)) && <Snow />}
       {STATIONS.map((st) => <Station key={st.key} st={st} active={activeKey === st.key} onSelect={onSelect} setHover={setHover} done={!!(doneMap && doneMap[st.key])} night={th.night} />)}
+      {MP7_HIRES && (
+        <EffectComposer multisampling={0}>
+          <Bloom intensity={0.5} luminanceThreshold={0.72} luminanceSmoothing={0.22} mipmapBlur radius={0.7} />
+        </EffectComposer>
+      )}
     </Canvas>
       {/* Filmische Vignette: sanft abgedunkelte Bildränder über der 3D-Szene */}
       <div className="mp-noprint" style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 6, background: `radial-gradient(ellipse at 50% 42%, rgba(0,0,0,0) ${Math.round(55 - th.dusk * 18)}%, rgba(15,23,42,${Math.round((0.32 + th.dusk * 0.14 + th.night * 0.14) * 100) / 100}) 100%)` }} />
@@ -12123,6 +12204,15 @@ export default function App() {
 
       {/* 🧭 Parkplan-Overlay mit Routenübersicht */}
       <CompassWidget viewRef={viewRef} doneMap={doneMap} />
+      {MP7_TOUCH && (
+        <>
+          <TouchJoystick keysRef={keysRef} />
+          <div className="mp-noprint mp-wood mp-safe-b" style={{ position: "absolute", right: 128, bottom: 14, zIndex: 22, borderRadius: 16, padding: "4px 6px", display: "flex", gap: 4 }}>
+            <Btn small farbe="#0369a1" active={!!keysRef.current.ego} onClick={() => { keysRef.current.ego = !keysRef.current.ego; AE.sfx("click"); }} title="Ich-Ansicht (wie Taste F)">👁 Ich</Btn>
+            <Btn small farbe="#f59e0b" onClick={overview} title="Übersicht (Vogelperspektive)">🗺️ Oben</Btn>
+          </div>
+        </>
+      )}
       <AnimatePresence>
         {mapOpen && (
           <motion.div {...THEME.motion.backdrop} onClick={() => { setMapOpen(false); AE.sfx("close"); }}
