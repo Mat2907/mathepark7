@@ -1,16 +1,20 @@
 # mathepark7
 
-MathePark 7 – Lehrer-Edition (Realschule Bayern, Jg. 7): eine einzelne HTML-Datei
-(`MathePark7_Lehrer-Edition-3.html`), die komplett **offline** läuft.
+MathePark 7 – Lehrer-Edition (Realschule Bayern, Jg. 7).
 
-## Dateien
-- `MathePark7_Lehrer-Edition-3.html` – die App (lädt `vendor/app.bundle.js`)
-- `vendor/app.bundle.js` – gebündelte Bibliotheken (React, three.js, @react-three/*, framer-motion), gebaut aus dem Inline-JSX (`<script type="text/plain" id="mp7-src">`)
-- `tools/build.mjs` + `package.json` – Build-Skript
+**`MathePark7_Lehrer-Edition-3.html` ist eine einzelne, allein lauffähige Datei** –
+das komplette JS-Bundle (React, three.js, @react-three/*, framer-motion) ist inline
+eingebettet. Einfach doppelt anklicken / per AirDrop aufs iPad – **kein Internet nötig**.
+
+## Aufbau der Datei
+- `script#mp7-src` (`text/plain`) – der les-/editierbare JSX-Quelltext der App
+- `script#mp7-bundle` (`module`) – das daraus gebaute, minifizierte Bundle (wird ausgeführt)
 
 ## Nach Änderungen am App-Code
 ```bash
-npm install     # einmalig (esbuild)
-npm run build   # baut vendor/app.bundle.js neu
+npm install     # einmalig (esbuild als devDependency)
+npm run build   # baut script#mp7-bundle in der HTML neu aus script#mp7-src
 ```
-Dann genügt wieder „Doppelt anklicken" – kein Internet nötig (funktioniert auch auf dem iPad offline, z. B. per AirDrop oder lokalem Server).
+
+`vendor/app.bundle.js` ist nur ein optionaler externer Fallback und wird nicht mehr
+von der HTML geladen.
